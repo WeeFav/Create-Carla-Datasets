@@ -1,0 +1,1 @@
+03960_img.jpg 03960_label.png 1 1 1 1
