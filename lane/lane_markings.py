@@ -43,7 +43,8 @@ class LaneMarkings():
     
 
     def draw_points(self, client, point):
-        client.get_world().debug.draw_point(point + carla.Location(z=0.05), size=0.05, life_time=cfg.number_of_lanepoints/cfg.fps, persistent_lines=False)    
+        if point is not None:
+            client.get_world().debug.draw_point(point + carla.Location(z=0.05), size=0.05, life_time=cfg.number_of_lanepoints/cfg.fps, persistent_lines=False)    
     
     
     def draw_lanes(self, client, point0, point1, color):
@@ -76,35 +77,34 @@ class LaneMarkings():
 
         
         if(cfg.junctionMode):
-            if(lanepoint.left_lane_marking.type != carla.LaneMarkingType.NONE):
-                self.lanes[0].append(left_lanemarking)
-                self.draw_points(self.client, left_lanemarking)
-            else:
-                self.lanes[0].append(None)
+            if(lanepoint.left_lane_marking.type == carla.LaneMarkingType.NONE):
+                left_lanemarking = None
+            self.lanes[0].append(left_lanemarking)
 
-            if(lanepoint.right_lane_marking.type != carla.LaneMarkingType.NONE):    
-                self.lanes[1].append(right_lanemarking)
-                self.draw_points(self.client, right_lanemarking) 
-            else:
-                self.lanes[1].append(None)  
-        
+            if(lanepoint.right_lane_marking.type == carla.LaneMarkingType.NONE):    
+                right_lanemarking = None
+            self.lanes[1].append(right_lanemarking)
+
+ 
             # Calculate remaining outer lanes (left and right).
             if(lanepoint.get_left_lane() and lanepoint.get_left_lane().left_lane_marking.type != carla.LaneMarkingType.NONE):
                 outer_left_lanemarking  = lanepoint.transform.location + 3 * abVec
-                self.lanes[2].append(outer_left_lanemarking)
-                self.draw_points(self.client, outer_left_lanemarking)
             else:
-                self.lanes[2].append(None)
+                outer_left_lanemarking = None
+            self.lanes[2].append(outer_left_lanemarking)
     
             if(lanepoint.get_right_lane() and lanepoint.get_right_lane().right_lane_marking.type != carla.LaneMarkingType.NONE):
                 outer_right_lanemarking = lanepoint.transform.location - 3 * abVec
-                self.lanes[3].append(outer_right_lanemarking)
-                self.draw_points(self.client, outer_right_lanemarking)
             else:
-                self.lanes[3].append(None)
+                outer_right_lanemarking = None
+            self.lanes[3].append(outer_right_lanemarking)
             
-            #draw_points(self.client, left_lanemarking)
-            #draw_points(self.client, right_lanemarking)
+            if cfg.draw3DLanes:
+                self.draw_points(self.client, left_lanemarking)
+                self.draw_points(self.client, right_lanemarking) 
+                self.draw_points(self.client, outer_left_lanemarking)
+                self.draw_points(self.client, outer_right_lanemarking)
+
         else:
             self.lanes[0].append(left_lanemarking) if left_lanemarking else self.lanes[0].append(None)
             self.lanes[1].append(right_lanemarking) if right_lanemarking else self.lanes[1].append(None)
@@ -152,10 +152,11 @@ class LaneMarkings():
         for lanepoint in lane_list:
             if(lanepoint and last_lanepoint):
                 # Draw outer lanes not on junction
+                # calculate distance between current point and previous point
                 distance = math.sqrt(math.pow(lanepoint.x-last_lanepoint.x ,2)+math.pow(lanepoint.y-last_lanepoint.y ,2)+math.pow(lanepoint.z-last_lanepoint.z ,2))
             
                 # Check of there's a hole in the list
-                if distance > cfg.meters_per_frame * 3:
+                if distance > cfg.meters_per_frame * 3: # if distance is too large, there is a gap
                     flat_lane_list_b = flat_lane_list_a
                     flat_lane_list_a = []
                     last_lanepoint = lanepoint
@@ -246,7 +247,10 @@ class LaneMarkings():
             new_x_coord = points_2d[:, 0].astype(int)
             new_y_coord = points_2d[:, 1].astype(int)
 
-            x_coord = np.concatenate((new_x_coord, old_x_coord), axis=None)
+            # x_coord = [x1, x2, ..., -1, x100, x101, ...]
+            # x1, x2, are from new_x_coord, representing first segment (closer to bottom of screen)
+            # x100, x101 are from old_x_coord, representing second segment (closer to top of screen)
+            x_coord = np.concatenate((new_x_coord, old_x_coord), axis=None) 
             y_coord = np.concatenate((new_y_coord, old_y_coord), axis=None)
 
         return list(zip(x_coord, y_coord))

@@ -8,7 +8,7 @@ fov = 90
 meters_per_frame = 1.0
 number_of_lanepoints = 80
 junctionMode = True
-render_lanes = False
+render_lanes = True
 draw3DLanes = False
 
 row_anchor_start = 160
@@ -18,3 +18,6 @@ for y in range(row_anchor_start, image_height, 10):
 
 # World
 num_vehicles = 50
+
+# Mode
+auto_run = True

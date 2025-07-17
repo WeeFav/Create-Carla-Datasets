@@ -38,6 +38,8 @@ class CarlaGame():
         bp_ego_vehicle.set_attribute('role_name', 'hero')
         self.ego_vehicle = self.world.spawn_actor(bp_ego_vehicle, random.choice(spawn_points))
         self.ego_vehicle.set_autopilot(True, self.tm.get_port())
+        # self.tm.keep_right_rule_percentage(self.ego_vehicle, 10)
+        # self.tm.random_left_lanechange_percentage(self.ego_vehicle, 100)
 
         # Spawn rgb-cam and attach to vehicle
         bp_camera_rgb = blueprint_library.find('sensor.camera.rgb')
@@ -67,6 +69,10 @@ class CarlaGame():
             
         self.lanemarkings = LaneMarkings(self.client)
 
+        # Create opencv window
+        cv2.namedWindow("inst_background", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("inst_background", 640, 360)
+
 
     def reshape_image(self, image):
         array = np.frombuffer(image.raw_data, dtype=np.dtype("uint8"))
@@ -76,8 +82,7 @@ class CarlaGame():
         return array
 
 
-    def draw_image(self, surface, image, blend=False):
-        array = self.reshape_image(image)
+    def draw_image(self, surface, array, blend=False):
         image_surface = pygame.surfarray.make_surface(array.swapaxes(0, 1))
         if blend:
             image_surface.set_alpha(100)
@@ -94,17 +99,37 @@ class CarlaGame():
             image_semseg: numpy array. Shows the semantic segmentation image on the pygame display.
         """
         # Draw the display.
-        self.draw_image(display, image)
+        array = self.reshape_image(image)
+        self.draw_image(display, array)
         #draw_image(display, image_semseg, blend=True)
         
+        inst_background = np.zeros_like(array)
+        colors = [[70,70,70], [120,120,120], [20,20,20], [170,170,170]]
+
         # Draw lanepoints of every lane on pygame window
         if(render_lanes):
             for i, color in enumerate(colormap):
                 if(lanes_list[i]):
-                    for j in range(len(lanes_list[i])):
-                        pygame.draw.circle(display, colormap[color], lanes_list[i][j], 3, 2)
-            
+                    lane = lanes_list[i]
+                    segments = []
+                    segment = []
+                    for x, y in lane:
+                        if x == -2:
+                            if len(segment) > 0:
+                                segments.append(segment)
+                                segment = []
+                        else:
+                            segment.append([x, y])
+                            pygame.draw.circle(display, colormap[color], (x, y), 3, 2)
+                    segments.append(segment)
+
+                    if len(segments) > 0:
+                        max_seg = max(segments, key=len)
+                        cv2.polylines(inst_background, np.int32([max_seg]), isClosed=False, color=colors[i], thickness=5)
+        
         pygame.display.flip()
+        cv2.imshow("inst_background", inst_background)
+        cv2.waitKey(1)
 
 
     def should_quit(self):
@@ -117,31 +142,43 @@ class CarlaGame():
     def run(self):
         with CarlaSyncMode(self.world, self.tm, self.camera_rgb, self.camera_semseg, fps=cfg.fps) as sync_mode:            
             while True:
-                    if self.should_quit():
-                        break
+                if self.should_quit():
+                    break
 
-                    # clock tick
-                    self.pygame_clock.tick()
-                    snapshot, image_rgb, image_semseg = sync_mode.tick(timeout=1.0)
+                if not cfg.auto_run:
+                    waiting = True
+                    while waiting:
+                        event = pygame.event.wait()
+                        if event.type == pygame.QUIT:
+                            pygame.quit()
+                            exit()
+                        keys = pygame.key.get_pressed()
+                        if keys[pygame.K_SPACE]:
+                            waiting = False
 
-                    # Get current waypoints
-                    waypoint = self.map.get_waypoint(self.ego_vehicle.get_location())
-                    waypoint_list = []
-                    for i in range(0, cfg.number_of_lanepoints):
-                        waypoint_list.append(waypoint.next(i + cfg.meters_per_frame)[0])
-                    
-                    # Convert and reshape image from Nx1 to shape(720, 1280, 3)
-                    image_semseg.convert(carla.ColorConverter.CityScapesPalette)
-                    image_semseg = self.reshape_image(image_semseg)
-                    
-                    # Calculate lanepoints for all lanes
-                    lanes_list, x_lanes_list = self.lanemarkings.detect_lanemarkings(waypoint_list, image_semseg, self.camera_rgb)
+                # clock tick
+                self.pygame_clock.tick()
+                snapshot, image_rgb, image_semseg = sync_mode.tick(timeout=1.0)
 
+                # Get current waypoints
+                waypoint = self.map.get_waypoint(self.ego_vehicle.get_location())
+                waypoint_list = []
+                for i in range(0, cfg.number_of_lanepoints):
+                    waypoint_list.append(waypoint.next(i + cfg.meters_per_frame)[0])
+                
+                # Convert and reshape image from Nx1 to shape(720, 1280, 3)
+                image_semseg.convert(carla.ColorConverter.CityScapesPalette)
+                image_semseg = self.reshape_image(image_semseg)
+                
+                # Calculate lanepoints for all lanes
+                lanes_list, x_lanes_list = self.lanemarkings.detect_lanemarkings(waypoint_list, image_semseg, self.camera_rgb)
+
+                if cfg.draw3DLanes:
                     for waypoint in waypoint_list:
                         self.world.debug.draw_point(location=waypoint.transform.location, size=0.05, life_time=cfg.number_of_lanepoints/cfg.fps, persistent_lines=False)                    
-                    
-                    # Show lanes on pygame
-                    self.render_display(self.display, image_rgb, image_semseg, lanes_list, self.lanemarkings.colormap, cfg.render_lanes)
+                
+                # Show lanes on pygame
+                self.render_display(self.display, image_rgb, image_semseg, lanes_list, self.lanemarkings.colormap, cfg.render_lanes)
 
             # Destroy all actors after game ends
             for vehicle in self.world.get_actors().filter('*vehicle*'):
