@@ -43,13 +43,13 @@ class LaneMarkings():
     
 
     def draw_points(self, client, point):
-        client.get_world().debug.draw_point(point + carla.Location(z=0.05), size=0.05, life_time=cfg.number_of_lanepoints/self.fps, persistent_lines=False)    
+        client.get_world().debug.draw_point(point + carla.Location(z=0.05), size=0.05, life_time=cfg.number_of_lanepoints/cfg.fps, persistent_lines=False)    
     
     
     def draw_lanes(self, client, point0, point1, color):
         if(point0 and point1):
             client.get_world().debug.draw_line(point0 + carla.Location(z=0.05), point1 + carla.Location(z=0.05), thickness=0.05, 
-                color=color, life_time=cfg.number_of_lanepoints/self.fps, persistent_lines=False)
+                color=color, life_time=cfg.number_of_lanepoints/cfg.fps, persistent_lines=False)
         
     
     def calculate3DLanepoints(self, lanepoint):
@@ -73,23 +73,33 @@ class LaneMarkings():
         abVec = carla.Location(orientationVec.y,-orientationVec.x,0) / length * 0.5* lanepoint.lane_width
         right_lanemarking = lanepoint.transform.location - abVec 
         left_lanemarking = lanepoint.transform.location + abVec
+
         
         if(cfg.junctionMode):
-            self.lanes[0].append(left_lanemarking) if(lanepoint.left_lane_marking.type != carla.LaneMarkingType.NONE) else self.lanes[0].append(None)
-            self.lanes[1].append(right_lanemarking) if(lanepoint.right_lane_marking.type != carla.LaneMarkingType.NONE) else self.lanes[1].append(None)  
+            if(lanepoint.left_lane_marking.type != carla.LaneMarkingType.NONE):
+                self.lanes[0].append(left_lanemarking)
+                self.draw_points(self.client, left_lanemarking)
+            else:
+                self.lanes[0].append(None)
+
+            if(lanepoint.right_lane_marking.type != carla.LaneMarkingType.NONE):    
+                self.lanes[1].append(right_lanemarking)
+                self.draw_points(self.client, right_lanemarking) 
+            else:
+                self.lanes[1].append(None)  
         
             # Calculate remaining outer lanes (left and right).
             if(lanepoint.get_left_lane() and lanepoint.get_left_lane().left_lane_marking.type != carla.LaneMarkingType.NONE):
                 outer_left_lanemarking  = lanepoint.transform.location + 3 * abVec
                 self.lanes[2].append(outer_left_lanemarking)
-                #draw_points(self.client, outer_left_lanemarking)
+                self.draw_points(self.client, outer_left_lanemarking)
             else:
                 self.lanes[2].append(None)
     
             if(lanepoint.get_right_lane() and lanepoint.get_right_lane().right_lane_marking.type != carla.LaneMarkingType.NONE):
                 outer_right_lanemarking = lanepoint.transform.location - 3 * abVec
                 self.lanes[3].append(outer_right_lanemarking)
-                #draw_points(self.client, outer_right_lanemarking)
+                self.draw_points(self.client, outer_right_lanemarking)
             else:
                 self.lanes[3].append(None)
             
@@ -114,7 +124,7 @@ class LaneMarkings():
             else:
                 self.lanes[3].append(None)
             
-            #draw_points(client, left_lanemarking)
+            # draw_points(client, left_lanemarking)
             #draw_points(client, right_lanemarking)
         
         return self.lanes

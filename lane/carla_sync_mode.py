@@ -17,20 +17,25 @@ class CarlaSyncMode(object):
 
     """
 
-    def __init__(self, world, *sensors, **kwargs):
+    def __init__(self, world, tm, *sensors, **kwargs):
         self.world = world
+        self.tm = tm
         self.sensors = sensors
         self.frame = None
         self.delta_seconds = 1.0 / kwargs.get('fps', cfg.fps)
         self._queues = []
-        self._settings = None
+        self._settings = None # save the inital settings so that when we leave CarlaSyncMode, we can restore it
 
     def __enter__(self):
         self._settings = self.world.get_settings()
-        self.frame = self.world.apply_settings(carla.WorldSettings(
+        settings = carla.WorldSettings(
             no_rendering_mode=False,
             synchronous_mode=True,
-            fixed_delta_seconds=self.delta_seconds))
+            fixed_delta_seconds=self.delta_seconds
+        )
+
+        self.frame = self.world.apply_settings(settings)
+        self.tm.set_synchronous_mode(True)
 
         def make_queue(register_event):
             q = queue.Queue()
@@ -50,6 +55,7 @@ class CarlaSyncMode(object):
 
     def __exit__(self, *args, **kwargs):
         self.world.apply_settings(self._settings)
+        self.tm.set_synchronous_mode(False)
 
     def _retrieve_data(self, sensor_queue, timeout):
         while True:
