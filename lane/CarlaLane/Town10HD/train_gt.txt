@@ -1,0 +1,4 @@
+C:\Users\marvi\Datasets\create_carla_datasets\lane\CarlaLane\Town10HD\img\0.png C:\Users\marvi\Datasets\create_carla_datasets\lane\CarlaLane\Town10HD\seg\0.png 1 1 1 0 2 2 2 0
+C:\Users\marvi\Datasets\create_carla_datasets\lane\CarlaLane\Town10HD\img\1.png C:\Users\marvi\Datasets\create_carla_datasets\lane\CarlaLane\Town10HD\seg\1.png 1 1 1 0 2 2 2 0
+C:\Users\marvi\Datasets\create_carla_datasets\lane\CarlaLane\Town10HD\img\2.png C:\Users\marvi\Datasets\create_carla_datasets\lane\CarlaLane\Town10HD\seg\2.png 1 1 1 0 2 2 2 0
+C:\Users\marvi\Datasets\create_carla_datasets\lane\CarlaLane\Town10HD\img\3.png C:\Users\marvi\Datasets\create_carla_datasets\lane\CarlaLane\Town10HD\seg\3.png 1 1 1 0 2 2 2 0

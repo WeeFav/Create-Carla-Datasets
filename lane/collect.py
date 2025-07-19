@@ -4,6 +4,9 @@ import cv2
 import numpy as np
 import sys
 import pygame
+import os
+import argparse
+from PIL import Image
 
 import config as cfg
 from carla_sync_mode import CarlaSyncMode
@@ -18,12 +21,14 @@ class CarlaGame():
     """
     Main Game Instance to execute carla simulator in pygame.
     """ 
-    def __init__(self):
+    def __init__(self, run_name):
         self.display = pygame.display.set_mode((cfg.image_width, cfg.image_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
         self.pygame_clock = pygame.time.Clock()
 
         self.client = carla.Client('localhost', 2000)
-        self.world = self.client.get_world()
+        self.world = self.client.load_world(cfg.town)
+        # weather = carla.WeatherParameters(sun_altitude_angle=-90)
+        self.world.set_weather(cfg.weather)
         self.map = self.world.get_map()
 
         # Traffic manager
@@ -38,6 +43,7 @@ class CarlaGame():
         bp_ego_vehicle.set_attribute('role_name', 'hero')
         self.ego_vehicle = self.world.spawn_actor(bp_ego_vehicle, random.choice(spawn_points))
         self.ego_vehicle.set_autopilot(True, self.tm.get_port())
+        self.tm.update_vehicle_lights(self.ego_vehicle, True)
         # self.tm.keep_right_rule_percentage(self.ego_vehicle, 10)
         # self.tm.random_left_lanechange_percentage(self.ego_vehicle, 100)
 
@@ -46,16 +52,22 @@ class CarlaGame():
         bp_camera_rgb.set_attribute('image_size_x', f'{cfg.image_width}')
         bp_camera_rgb.set_attribute('image_size_y', f'{cfg.image_height}')
         bp_camera_rgb.set_attribute('fov', f'{cfg.fov}')
-        camera_spawnpoint_rgb = carla.Transform(carla.Location(x=0.0, z=3.2), carla.Rotation(pitch=-19.5))
-        self.camera_rgb = self.world.spawn_actor(bp_camera_rgb, camera_spawnpoint_rgb, attach_to=self.ego_vehicle)
+        camera_spawnpoint = carla.Transform(carla.Location(x=0.0, z=3.2), carla.Rotation(pitch=-19.5))
+        self.camera_rgb = self.world.spawn_actor(bp_camera_rgb, camera_spawnpoint, attach_to=self.ego_vehicle)
 
         # Spawn semseg-cam and attach to vehicle
         bp_camera_semseg = blueprint_library.find('sensor.camera.semantic_segmentation')
         bp_camera_semseg.set_attribute('image_size_x', f'{cfg.image_width}')
         bp_camera_semseg.set_attribute('image_size_y', f'{cfg.image_height}')
         bp_camera_semseg.set_attribute('fov', f'{cfg.fov}')
-        camera_semseg_spawnpoint = carla.Transform(carla.Location(x=0.0, z=3.2), carla.Rotation(pitch=-19.5))
-        self.camera_semseg = self.world.spawn_actor(bp_camera_semseg, camera_semseg_spawnpoint, attach_to=self.ego_vehicle)
+        self.camera_semseg = self.world.spawn_actor(bp_camera_semseg, camera_spawnpoint, attach_to=self.ego_vehicle)
+
+        # Spawn depth-cam and attach to vehicle
+        bp_camera_depth = blueprint_library.find('sensor.camera.depth')
+        bp_camera_depth.set_attribute('image_size_x', f'{cfg.image_width}')
+        bp_camera_depth.set_attribute('image_size_y', f'{cfg.image_height}')
+        bp_camera_depth.set_attribute('fov', f'{cfg.fov}')
+        self.camera_depth = self.world.spawn_actor(bp_camera_depth, camera_spawnpoint, attach_to=self.ego_vehicle)
 
         # Spawn vehicles
         vehicle_blueprints = blueprint_library.filter('*vehicle*')
@@ -65,13 +77,38 @@ class CarlaGame():
             vehicle = self.world.try_spawn_actor(random.choice(vehicle_blueprints), random.choice(spawn_points))
             if vehicle is not None:
                 vehicle.set_autopilot(True, self.tm.get_port())
+                self.tm.update_vehicle_lights(vehicle, True)
                 i += 1
             
         self.lanemarkings = LaneMarkings(self.client)
+        self.lane_exist = [0] * 4
+        self.lane_cls = [0] * 4
 
         # Create opencv window
         cv2.namedWindow("inst_background", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("inst_background", 640, 360)
+
+        # Create save path
+        if cfg.saving:
+            if run_name:
+                run_root = os.path.join(cfg.data_root, f"{cfg.town}_{run_name}")
+            else:
+                run_root = os.path.join(cfg.data_root, f"{cfg.town}")
+            self.img_folder = os.path.join(run_root, "img")
+            self.seg_folder = os.path.join(run_root, "seg")
+            os.makedirs(run_root, exist_ok=True)
+            os.makedirs(self.img_folder, exist_ok=True)
+            os.makedirs(self.seg_folder, exist_ok=True)
+        
+        self.tick_counter = 0
+        self.save_tick = cfg.save_freq * cfg.fps
+        self.save_counter = 0
+        self.skip_counter = 0
+        self.skip_interval = cfg.skip_at_traffic_light_interval
+
+        txt_file_path = os.path.join(run_root, "train_gt.txt")
+        open(txt_file_path, "w").close()
+        self.txt_fp = open(txt_file_path, "a", buffering=1)
 
 
     def reshape_image(self, image):
@@ -79,7 +116,7 @@ class CarlaGame():
         array = np.reshape(array, (image.height, image.width, 4))
         array = array[:, :, :3]
         array = array[:, :, ::-1]
-        return array
+        return array # (H, W, C)
 
 
     def draw_image(self, surface, array, blend=False):
@@ -89,7 +126,7 @@ class CarlaGame():
         surface.blit(image_surface, (0, 0))
 
 
-    def render_display(self, display, image, image_semseg, lanes_list, colormap, render_lanes=True):
+    def render_display(self, image_rgb, image_depth, lanes_list):
         """
         Renders the images captured from both cameras and shows it on the
         pygame display
@@ -99,37 +136,82 @@ class CarlaGame():
             image_semseg: numpy array. Shows the semantic segmentation image on the pygame display.
         """
         # Draw the display.
-        array = self.reshape_image(image)
-        self.draw_image(display, array)
-        #draw_image(display, image_semseg, blend=True)
+        image_rgb = self.reshape_image(image_rgb)
+        image_depth = self.reshape_image(image_depth)
+        self.draw_image(self.display, image_rgb)
         
-        inst_background = np.zeros_like(array)
-        colors = [[70,70,70], [120,120,120], [20,20,20], [170,170,170]]
+        inst_background = np.zeros_like(image_rgb)
+        inst_background_display = np.zeros_like(image_rgb)
+        colors = [[1,1,1], [2,2,2], [3,3,3], [4,4,4]]
+        colors_display = [[70,70,70], [120,120,120], [20,20,20], [170,170,170]]
 
         # Draw lanepoints of every lane on pygame window
-        if(render_lanes):
-            for i, color in enumerate(colormap):
-                if(lanes_list[i]):
-                    lane = lanes_list[i]
-                    segments = []
-                    segment = []
-                    for x, y in lane:
-                        if x == -2:
-                            if len(segment) > 0:
-                                segments.append(segment)
-                                segment = []
-                        else:
-                            segment.append([x, y])
-                            pygame.draw.circle(display, colormap[color], (x, y), 3, 2)
-                    segments.append(segment)
+        if(cfg.render_lanes):
+            for i, color in enumerate(self.lanemarkings.colormap):
+                lane = lanes_list[i]
+                segments = [] # store all segments for a lane
+                segment = [] # store all coordinates for a segment
 
-                    if len(segments) > 0:
-                        max_seg = max(segments, key=len)
-                        cv2.polylines(inst_background, np.int32([max_seg]), isClosed=False, color=colors[i], thickness=5)
+                for x, y in lane:
+                    if x == -2:
+                        if segment: # avoid appending empty segment
+                            segments.append(segment)
+                            segment = []
+                    else:
+                        segment.append([x, y])
+                        pygame.draw.circle(self.display, self.lanemarkings.colormap[color], (x, y), 3, 2)
+                if segment: # append leftover segment
+                    segments.append(segment) 
+
+                if segments:
+                    self.lane_exist[i] = 1 # mark lane as exist
+                    max_seg = max(segments, key=len)
+
+                    # # backproject lane in 2D pixel to 3D world to find lane type
+                    # mid_pixel = max_seg[len(max_seg) // 2] # (x, y)
+                    # rgb = image_depth[mid_pixel[1], mid_pixel[0]]
+                    # R = rgb[0]
+                    # G = rgb[1]
+                    # B = rgb[2]
+                    # normalized = (R + G * 256 + B * 256 * 256) / (256 * 256 * 256 - 1)
+                    # depth_in_meters = 1000 * normalized
+                    # lanepoint = self.lanemarkings.calculate_waypoint_from_2Dlane(mid_pixel[0], mid_pixel[1], i, depth_in_meters, self.camera_depth)
+                    # self.world.debug.draw_point(lanepoint, size=0.05, life_time=2 * (1/cfg.fps), persistent_lines=False)    
+
+                    self.lane_cls[i] = 2
+
+                    cv2.polylines(inst_background, np.int32([max_seg]), isClosed=False, color=colors[i], thickness=5)
+                    cv2.polylines(inst_background_display, np.int32([max_seg]), isClosed=False, color=colors_display[i], thickness=5)
         
         pygame.display.flip()
-        cv2.imshow("inst_background", inst_background)
+        cv2.imshow("inst_background", inst_background_display)
         cv2.waitKey(1)
+
+        if cfg.saving:
+            if self.tick_counter % self.save_tick == 0:
+                if self.ego_vehicle.is_at_traffic_light() and (self.skip_counter % self.skip_interval != 0):
+                    self.skip_counter += 1
+                    print("save skipped at traffic light")
+                else:
+                    self.skip_counter = 0 # reset skip counter
+
+                    # saving images
+                    image_rgb = Image.fromarray(image_rgb)
+                    inst_background = Image.fromarray(inst_background_display[:,:,0].astype(np.uint8), mode="L")
+                    img_path = os.path.join(self.img_folder, f"{self.save_counter}.png")
+                    seg_path = os.path.join(self.seg_folder, f"{self.save_counter}.png")
+                    image_rgb.save(img_path)
+                    inst_background.save(seg_path)
+
+                    # write to txt file
+                    s = [img_path, seg_path]
+                    s.extend([str(x) for x in self.lane_exist])
+                    s.extend([str(x) for x in self.lane_cls])
+                    s = " ".join(s) + "\n"
+                    self.txt_fp.write(s)
+
+                    print("saved: ", self.save_counter)
+                    self.save_counter += 1
 
 
     def should_quit(self):
@@ -140,58 +222,68 @@ class CarlaGame():
     
 
     def run(self):
-        with CarlaSyncMode(self.world, self.tm, self.camera_rgb, self.camera_semseg, fps=cfg.fps) as sync_mode:            
-            while True:
-                if self.should_quit():
-                    break
+        with CarlaSyncMode(self.world, self.tm, self.camera_rgb, self.camera_semseg, self.camera_depth, fps=cfg.fps) as sync_mode:
+            try:
+                while True:
+                    if self.should_quit():
+                        break
 
-                if not cfg.auto_run:
-                    waiting = True
-                    while waiting:
-                        event = pygame.event.wait()
-                        if event.type == pygame.QUIT:
-                            pygame.quit()
-                            exit()
-                        keys = pygame.key.get_pressed()
-                        if keys[pygame.K_SPACE]:
-                            waiting = False
+                    if not cfg.auto_run:
+                        waiting = True
+                        while waiting:
+                            event = pygame.event.wait()
+                            if event.type == pygame.QUIT:
+                                pygame.quit()
+                                exit()
+                            keys = pygame.key.get_pressed()
+                            if keys[pygame.K_SPACE]:
+                                waiting = False
 
-                # clock tick
-                self.pygame_clock.tick()
-                snapshot, image_rgb, image_semseg = sync_mode.tick(timeout=1.0)
+                    # clock tick
+                    self.pygame_clock.tick()
+                    snapshot, image_rgb, image_semseg, image_depth = sync_mode.tick(timeout=1.0)
+                    self.tick_counter += 1
 
-                # Get current waypoints
-                waypoint = self.map.get_waypoint(self.ego_vehicle.get_location())
-                waypoint_list = []
-                for i in range(0, cfg.number_of_lanepoints):
-                    waypoint_list.append(waypoint.next(i + cfg.meters_per_frame)[0])
-                
-                # Convert and reshape image from Nx1 to shape(720, 1280, 3)
-                image_semseg.convert(carla.ColorConverter.CityScapesPalette)
-                image_semseg = self.reshape_image(image_semseg)
-                
-                # Calculate lanepoints for all lanes
-                lanes_list, x_lanes_list = self.lanemarkings.detect_lanemarkings(waypoint_list, image_semseg, self.camera_rgb)
+                    # Get current waypoints
+                    waypoint = self.map.get_waypoint(self.ego_vehicle.get_location())
+                    waypoint_list = []
+                    for i in range(0, cfg.number_of_lanepoints):
+                        waypoint_list.append(waypoint.next(i + cfg.meters_per_frame)[0])
+                    
+                    # Convert and reshape image from Nx1 to shape(720, 1280, 3)
+                    image_semseg.convert(carla.ColorConverter.CityScapesPalette)
+                    image_semseg = self.reshape_image(image_semseg)
+                    
+                    # Calculate lanepoints for all lanes
+                    lanes_list, x_lanes_list = self.lanemarkings.detect_lanemarkings(waypoint_list, image_semseg, self.camera_rgb)
 
-                if cfg.draw3DLanes:
-                    for waypoint in waypoint_list:
-                        self.world.debug.draw_point(location=waypoint.transform.location, size=0.05, life_time=cfg.number_of_lanepoints/cfg.fps, persistent_lines=False)                    
-                
-                # Show lanes on pygame
-                self.render_display(self.display, image_rgb, image_semseg, lanes_list, self.lanemarkings.colormap, cfg.render_lanes)
+                    if cfg.draw3DLanes:
+                        for waypoint in waypoint_list:
+                            self.world.debug.draw_point(location=waypoint.transform.location, size=0.05, life_time=cfg.number_of_lanepoints/cfg.fps, persistent_lines=False)                    
+                    
+                    # Show lanes on pygame
+                    self.render_display(image_rgb, image_depth, lanes_list)
 
-            # Destroy all actors after game ends
-            for vehicle in self.world.get_actors().filter('*vehicle*'):
-                vehicle.destroy()
-            print("All vehicles destroyed")
-            self.camera_rgb.destroy()
-            self.camera_semseg.destroy()
-            print("Cameras destroyed")
+            finally:
+                # Destroy all actors after game ends
+                for vehicle in self.world.get_actors().filter('*vehicle*'):
+                    vehicle.destroy()
+                print("All vehicles destroyed")
+                self.camera_rgb.destroy()
+                self.camera_semseg.destroy()
+                self.camera_depth.destroy()
+                print("Cameras destroyed")
+                self.txt_fp.close()
+                print("File saved")
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run_name", required=False, default=None)
+    args = parser.parse_args()
+
     pygame.init()
 
-    game = CarlaGame()
+    game = CarlaGame(args.run_name)
     game.run()
 
     pygame.quit()

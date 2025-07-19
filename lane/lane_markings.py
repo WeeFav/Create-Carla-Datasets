@@ -24,12 +24,12 @@ class LaneMarkings():
                                'blue': carla.Color(0, 0, 255)}
 
         # Intrinsic camera matrix needed to convert 3D-world coordinates to 2D-imagepoints
-        f = cfg.image_width / (2 * math.tan(cfg.fov * math.pi / 360))
-        c_x = cfg.image_width/2
-        c_y = cfg.image_height/2
+        self.f = cfg.image_width / (2 * math.tan(cfg.fov * math.pi / 360))
+        self.c_x = cfg.image_width/2
+        self.c_y = cfg.image_height/2
         
-        self.cameraMatrix  = np.float32([[f, 0, c_x],
-                                         [0, f, c_y],
+        self.cameraMatrix  = np.float32([[self.f, 0, self.c_x],
+                                         [0, self.f, self.c_y],
                                          [0, 0, 1]])
         
         self.lanes = [
@@ -75,57 +75,35 @@ class LaneMarkings():
         right_lanemarking = lanepoint.transform.location - abVec 
         left_lanemarking = lanepoint.transform.location + abVec
 
-        
-        if(cfg.junctionMode):
-            if(lanepoint.left_lane_marking.type == carla.LaneMarkingType.NONE):
-                left_lanemarking = None
-            self.lanes[0].append(left_lanemarking)
+        if(lanepoint.left_lane_marking.type == carla.LaneMarkingType.NONE):
+            left_lanemarking = None
+        self.lanes[0].append(left_lanemarking)
 
-            if(lanepoint.right_lane_marking.type == carla.LaneMarkingType.NONE):    
-                right_lanemarking = None
-            self.lanes[1].append(right_lanemarking)
+        if(lanepoint.right_lane_marking.type == carla.LaneMarkingType.NONE):    
+            right_lanemarking = None
+        self.lanes[1].append(right_lanemarking)
 
- 
-            # Calculate remaining outer lanes (left and right).
-            if(lanepoint.get_left_lane() and lanepoint.get_left_lane().left_lane_marking.type != carla.LaneMarkingType.NONE):
-                outer_left_lanemarking  = lanepoint.transform.location + 3 * abVec
-            else:
-                outer_left_lanemarking = None
-            self.lanes[2].append(outer_left_lanemarking)
-    
-            if(lanepoint.get_right_lane() and lanepoint.get_right_lane().right_lane_marking.type != carla.LaneMarkingType.NONE):
-                outer_right_lanemarking = lanepoint.transform.location - 3 * abVec
-            else:
-                outer_right_lanemarking = None
-            self.lanes[3].append(outer_right_lanemarking)
-            
-            if cfg.draw3DLanes:
-                self.draw_points(self.client, left_lanemarking)
-                self.draw_points(self.client, right_lanemarking) 
-                self.draw_points(self.client, outer_left_lanemarking)
-                self.draw_points(self.client, outer_right_lanemarking)
 
+        # Calculate left lanes
+        if(lanepoint.get_left_lane() and lanepoint.get_left_lane().left_lane_marking.type != carla.LaneMarkingType.NONE):
+            outer_left_lanemarking  = lanepoint.transform.location + 3 * abVec
         else:
-            self.lanes[0].append(left_lanemarking) if left_lanemarking else self.lanes[0].append(None)
-            self.lanes[1].append(right_lanemarking) if right_lanemarking else self.lanes[1].append(None)
+            outer_left_lanemarking = None
+        self.lanes[2].append(outer_left_lanemarking)
+
+        # Calculate right lanes
+        if(lanepoint.get_right_lane() and lanepoint.get_right_lane().right_lane_marking.type != carla.LaneMarkingType.NONE):
+            outer_right_lanemarking = lanepoint.transform.location - 3 * abVec
+        else:
+            outer_right_lanemarking = None
+        self.lanes[3].append(outer_right_lanemarking)
+
         
-            # Calculate remaining outer lanes (left and right).
-            if(lanepoint.get_left_lane() and lanepoint.get_left_lane().lane_type == carla.LaneType.Driving):
-                outer_left_lanemarking  = lanepoint.transform.location + 3 * abVec
-                self.lanes[2].append(outer_left_lanemarking)
-                #draw_points(client, outer_left_lanemarking)
-            else:
-                self.lanes[2].append(None)
-                
-            if(lanepoint.get_right_lane() and lanepoint.get_right_lane().lane_type == carla.LaneType.Driving):
-                outer_right_lanemarking = lanepoint.transform.location - 3 * abVec
-                self.lanes[3].append(outer_right_lanemarking)
-                #draw_points(client, outer_right_lanemarking)
-            else:
-                self.lanes[3].append(None)
-            
-            # draw_points(client, left_lanemarking)
-            #draw_points(client, right_lanemarking)
+        if cfg.draw3DLanes:
+            self.draw_points(self.client, left_lanemarking)
+            self.draw_points(self.client, right_lanemarking) 
+            self.draw_points(self.client, outer_left_lanemarking)
+            self.draw_points(self.client, outer_right_lanemarking)
         
         return self.lanes
 
@@ -377,3 +355,21 @@ class LaneMarkings():
             x_lanes_list.append(self.format2DLanepoints(lane))
         
         return lanes_list, x_lanes_list
+    
+
+    def calculate_waypoint_from_2Dlane(self, x_coord, y_coord, lane_num, depth, camera_depth):
+        # Convert 2D pixel to 3D camera standard coordinates
+        x_std = (x_coord - self.c_x) * depth / self.f
+        y_std = (y_coord - self.c_y) * depth / self.f
+        z_std = depth
+
+        # Convert from standard camera to CARLA camera coordinates
+        x_carla = z_std
+        y_carla = -x_std
+        z_carla = -y_std
+
+        # Convert to CARLA Location and transform to world space
+        point_cam = carla.Location(x=x_carla, y=y_carla, z=z_carla)
+        point_world = camera_depth.get_transform().transform(point_cam)
+
+        return carla.Location(x=point_world.x, y=point_world.y, z=point_world.z)

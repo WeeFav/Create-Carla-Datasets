@@ -1,2 +1,4 @@
 /Carla-Lane-Detection-Dataset-Generation
 __pycache__/
+*.jpg
+*.png
