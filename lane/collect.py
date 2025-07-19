@@ -52,7 +52,7 @@ class CarlaGame():
         bp_camera_rgb.set_attribute('image_size_x', f'{cfg.image_width}')
         bp_camera_rgb.set_attribute('image_size_y', f'{cfg.image_height}')
         bp_camera_rgb.set_attribute('fov', f'{cfg.fov}')
-        camera_spawnpoint = carla.Transform(carla.Location(x=0.0, z=3.2), carla.Rotation(pitch=-19.5))
+        camera_spawnpoint = carla.Transform(carla.Location(x=1.0, z=2.0), carla.Rotation(pitch=-18.5)) # camera 5
         self.camera_rgb = self.world.spawn_actor(bp_camera_rgb, camera_spawnpoint, attach_to=self.ego_vehicle)
 
         # Spawn semseg-cam and attach to vehicle
@@ -81,8 +81,10 @@ class CarlaGame():
                 i += 1
             
         self.lanemarkings = LaneMarkings(self.client)
-        self.lane_exist = [0] * 4
-        self.lane_cls = [0] * 4
+
+        self.tick_counter = 0
+        self.colors = [[1,1,1], [2,2,2], [3,3,3], [4,4,4]]
+        self.colors_display = [[70,70,70], [120,120,120], [20,20,20], [170,170,170]]
 
         # Create opencv window
         cv2.namedWindow("inst_background", cv2.WINDOW_NORMAL)
@@ -100,15 +102,14 @@ class CarlaGame():
             os.makedirs(self.img_folder, exist_ok=True)
             os.makedirs(self.seg_folder, exist_ok=True)
         
-        self.tick_counter = 0
-        self.save_tick = cfg.save_freq * cfg.fps
-        self.save_counter = 0
-        self.skip_counter = 0
-        self.skip_interval = cfg.skip_at_traffic_light_interval
+            self.save_tick = cfg.save_freq * cfg.fps
+            self.save_counter = 0
+            self.skip_counter = 0
+            self.skip_interval = cfg.skip_at_traffic_light_interval
 
-        txt_file_path = os.path.join(run_root, "train_gt.txt")
-        open(txt_file_path, "w").close()
-        self.txt_fp = open(txt_file_path, "a", buffering=1)
+            txt_file_path = os.path.join(run_root, "train_gt.txt")
+            open(txt_file_path, "w").close()
+            self.txt_fp = open(txt_file_path, "a", buffering=1)
 
 
     def reshape_image(self, image):
@@ -142,8 +143,9 @@ class CarlaGame():
         
         inst_background = np.zeros_like(image_rgb)
         inst_background_display = np.zeros_like(image_rgb)
-        colors = [[1,1,1], [2,2,2], [3,3,3], [4,4,4]]
-        colors_display = [[70,70,70], [120,120,120], [20,20,20], [170,170,170]]
+
+        lane_exist = [0] * 4
+        lane_cls = [0] * 4
 
         # Draw lanepoints of every lane on pygame window
         if(cfg.render_lanes):
@@ -164,7 +166,7 @@ class CarlaGame():
                     segments.append(segment) 
 
                 if segments:
-                    self.lane_exist[i] = 1 # mark lane as exist
+                    lane_exist[i] = 1 # mark lane as exist
                     max_seg = max(segments, key=len)
 
                     # # backproject lane in 2D pixel to 3D world to find lane type
@@ -178,10 +180,10 @@ class CarlaGame():
                     # lanepoint = self.lanemarkings.calculate_waypoint_from_2Dlane(mid_pixel[0], mid_pixel[1], i, depth_in_meters, self.camera_depth)
                     # self.world.debug.draw_point(lanepoint, size=0.05, life_time=2 * (1/cfg.fps), persistent_lines=False)    
 
-                    self.lane_cls[i] = 2
+                    lane_cls[i] = 2
 
-                    cv2.polylines(inst_background, np.int32([max_seg]), isClosed=False, color=colors[i], thickness=5)
-                    cv2.polylines(inst_background_display, np.int32([max_seg]), isClosed=False, color=colors_display[i], thickness=5)
+                    cv2.polylines(inst_background, np.int32([max_seg]), isClosed=False, color=self.colors[i], thickness=5)
+                    cv2.polylines(inst_background_display, np.int32([max_seg]), isClosed=False, color=self.colors_display[i], thickness=5)
         
         pygame.display.flip()
         cv2.imshow("inst_background", inst_background_display)
@@ -189,29 +191,33 @@ class CarlaGame():
 
         if cfg.saving:
             if self.tick_counter % self.save_tick == 0:
-                if self.ego_vehicle.is_at_traffic_light() and (self.skip_counter % self.skip_interval != 0):
-                    self.skip_counter += 1
-                    print("save skipped at traffic light")
+                if self.ego_vehicle.is_at_traffic_light():
+                    if self.skip_counter % self.skip_interval != 0:
+                        self.skip_counter += 1
+                        print("save skipped at traffic light")
+                        return
+                    else:
+                        self.skip_counter += 1
                 else:
                     self.skip_counter = 0 # reset skip counter
+                    
+                # saving images
+                image_rgb = Image.fromarray(image_rgb)
+                inst_background = Image.fromarray(inst_background[:,:,0].astype(np.uint8), mode="L")
+                img_path = os.path.join(self.img_folder, f"{self.save_counter}.png")
+                seg_path = os.path.join(self.seg_folder, f"{self.save_counter}.png")
+                image_rgb.save(img_path)
+                inst_background.save(seg_path)
 
-                    # saving images
-                    image_rgb = Image.fromarray(image_rgb)
-                    inst_background = Image.fromarray(inst_background_display[:,:,0].astype(np.uint8), mode="L")
-                    img_path = os.path.join(self.img_folder, f"{self.save_counter}.png")
-                    seg_path = os.path.join(self.seg_folder, f"{self.save_counter}.png")
-                    image_rgb.save(img_path)
-                    inst_background.save(seg_path)
+                # write to txt file
+                s = [img_path, seg_path]
+                s.extend([str(x) for x in lane_exist])
+                s.extend([str(x) for x in lane_cls])
+                s = " ".join(s) + "\n"
+                self.txt_fp.write(s)
 
-                    # write to txt file
-                    s = [img_path, seg_path]
-                    s.extend([str(x) for x in self.lane_exist])
-                    s.extend([str(x) for x in self.lane_cls])
-                    s = " ".join(s) + "\n"
-                    self.txt_fp.write(s)
-
-                    print("saved: ", self.save_counter)
-                    self.save_counter += 1
+                print("saved: ", self.save_counter)
+                self.save_counter += 1
 
 
     def should_quit(self):
@@ -273,8 +279,9 @@ class CarlaGame():
                 self.camera_semseg.destroy()
                 self.camera_depth.destroy()
                 print("Cameras destroyed")
-                self.txt_fp.close()
-                print("File saved")
+                if cfg.saving:
+                    self.txt_fp.close()
+                    print("File saved")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

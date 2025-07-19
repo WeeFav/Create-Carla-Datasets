@@ -20,13 +20,13 @@ for y in range(row_anchor_start, image_height, 10):
 
 # World
 town = 'Town10HD'
-num_vehicles = 0
+num_vehicles = 50
 # [ClearNoon, CloudyNoon, WetNoon, WetCloudyNoon, SoftRainNoon, MidRainyNoon, HardRainNoon, ClearSunset, CloudySunset, WetSunset, WetCloudySunset, SoftRainSunset, MidRainSunset, HardRainSunset]
 weather = carla.WeatherParameters.ClearNoon
 
 # Mode
 auto_run = True
 saving = True
-data_root = "C:\\Users\\marvi\\Datasets\\create_carla_datasets\\lane\\CarlaLane"
-save_freq = 5 # in seconds
-skip_at_traffic_light_interval = 3 # number of saved frames
+data_root = "C:\\Users\\marvi\\Datasets\\Lane\\CarlaLane"
+save_freq = 4 # in seconds
+skip_at_traffic_light_interval = 4 # number of saved frames
