@@ -12,7 +12,7 @@ class LaneMarkings():
     """
     Helper class to detect and draw lanemarkings in carla.
     """
-    def __init__(self, client):
+    def __init__(self, client, world):
         self.colormap = {'green': (0, 255, 0),
                          'red': (255, 0, 0),
                          'yellow': (255, 255, 0),
@@ -40,11 +40,12 @@ class LaneMarkings():
         ]
 
         self.client = client
+        self.world = world
     
 
     def draw_points(self, client, point):
         if point is not None:
-            client.get_world().debug.draw_point(point + carla.Location(z=0.05), size=0.05, life_time=cfg.number_of_lanepoints/cfg.fps, persistent_lines=False)    
+            client.get_world().debug.draw_point(point + carla.Location(z=0.05), size=0.05, life_time=2 * (1/cfg.fps), persistent_lines=False)    
     
     
     def draw_lanes(self, client, point0, point1, color):
@@ -77,19 +78,18 @@ class LaneMarkings():
 
         if(lanepoint.left_lane_marking.type == carla.LaneMarkingType.NONE):
             left_lanemarking = None
-        self.lanes[0].append(left_lanemarking)
+        self.lanes[1].append(left_lanemarking)
 
         if(lanepoint.right_lane_marking.type == carla.LaneMarkingType.NONE):    
             right_lanemarking = None
-        self.lanes[1].append(right_lanemarking)
-
+        self.lanes[2].append(right_lanemarking)
 
         # Calculate left lanes
         if(lanepoint.get_left_lane() and lanepoint.get_left_lane().left_lane_marking.type != carla.LaneMarkingType.NONE):
             outer_left_lanemarking  = lanepoint.transform.location + 3 * abVec
         else:
             outer_left_lanemarking = None
-        self.lanes[2].append(outer_left_lanemarking)
+        self.lanes[0].append(outer_left_lanemarking)
 
         # Calculate right lanes
         if(lanepoint.get_right_lane() and lanepoint.get_right_lane().right_lane_marking.type != carla.LaneMarkingType.NONE):
@@ -97,7 +97,6 @@ class LaneMarkings():
         else:
             outer_right_lanemarking = None
         self.lanes[3].append(outer_right_lanemarking)
-
         
         if cfg.draw3DLanes:
             self.draw_points(self.client, left_lanemarking)
@@ -357,19 +356,68 @@ class LaneMarkings():
         return lanes_list, x_lanes_list
     
 
-    def calculate_waypoint_from_2Dlane(self, x_coord, y_coord, lane_num, depth, camera_depth):
+    def calculate_lane_marking_type_from_2Dlane(self, point, lane_num, image_depth, camera_depth):
+        x = int(point[0])
+        y = int(point[1])
+
+        rgb = image_depth[y, x]
+        R = rgb[0]
+        G = rgb[1]
+        B = rgb[2]
+
+        normalized = (R + G * 256 + B * 256 * 256) / (256 * 256 * 256 - 1)
+        depth_in_meters = 1000 * normalized
+
         # Convert 2D pixel to 3D camera standard coordinates
-        x_std = (x_coord - self.c_x) * depth / self.f
-        y_std = (y_coord - self.c_y) * depth / self.f
-        z_std = depth
+        x_std = (x - self.c_x) * depth_in_meters / self.f
+        y_std = (y - self.c_y) * depth_in_meters / self.f
+        z_std = depth_in_meters
 
         # Convert from standard camera to CARLA camera coordinates
         x_carla = z_std
-        y_carla = -x_std
+        y_carla = x_std
         z_carla = -y_std
 
         # Convert to CARLA Location and transform to world space
         point_cam = carla.Location(x=x_carla, y=y_carla, z=z_carla)
         point_world = camera_depth.get_transform().transform(point_cam)
+        lanepoint = carla.Location(x=point_world.x, y=point_world.y, z=point_world.z)
+        lane_marking_type, side = self.get_lane_marking_type(lanepoint)
 
-        return carla.Location(x=point_world.x, y=point_world.y, z=point_world.z)
+        if lane_marking_type == carla.LaneMarkingType.Broken:
+            return 0
+        elif lane_marking_type == carla.LaneMarkingType.Solid or lane_marking_type == carla.LaneMarkingType.SolidSolid:
+            return 1
+        else:
+            return 2
+
+    def get_lane_marking_type(self, location):        
+        # Step 1: Project to closest waypoint
+        waypoint = self.world.get_map().get_waypoint(
+            location,
+            project_to_road=True,
+            lane_type=carla.LaneType.Any
+        )
+        # self.world.debug.draw_point(waypoint.transform.location, size=0.2, color=carla.Color(255,255,0), life_time=2 * (1/cfg.fps), persistent_lines=False)
+
+        # Step 2: Vector from waypoint (lane center) to original location
+        dx = location.x - waypoint.transform.location.x
+        dy = location.y - waypoint.transform.location.y
+
+        # Step 4: Compute perpendicular (normal vector to the right of lane)
+        right = waypoint.transform.get_right_vector() 
+
+        # Step 5: Project vector from center to location onto the right vector
+        dot = dx * right.x + dy * right.y
+
+        # Step 6: Determine side and return the correct marking
+        if dot >= 0:
+            # Location is to the right of lane center
+            marking = waypoint.right_lane_marking
+            side = "right"
+        else:
+            # Location is to the left
+            marking = waypoint.left_lane_marking
+            side = "left"
+
+        return marking.type, side

@@ -27,8 +27,9 @@ class CarlaGame():
 
         self.client = carla.Client('localhost', 2000)
         self.world = self.client.load_world(cfg.town)
+        weather = cfg.weather
         # weather = carla.WeatherParameters(sun_altitude_angle=-90)
-        self.world.set_weather(cfg.weather)
+        self.world.set_weather(weather)
         self.map = self.world.get_map()
 
         # Traffic manager
@@ -80,7 +81,7 @@ class CarlaGame():
                 self.tm.update_vehicle_lights(vehicle, True)
                 i += 1
             
-        self.lanemarkings = LaneMarkings(self.client)
+        self.lanemarkings = LaneMarkings(self.client, self.world)
 
         self.tick_counter = 0
         self.colors = [[1,1,1], [2,2,2], [3,3,3], [4,4,4]]
@@ -145,7 +146,7 @@ class CarlaGame():
         inst_background_display = np.zeros_like(image_rgb)
 
         lane_exist = [0] * 4
-        lane_cls = [0] * 4
+        lane_cls = [-1] * 4
 
         # Draw lanepoints of every lane on pygame window
         if(cfg.render_lanes):
@@ -169,18 +170,12 @@ class CarlaGame():
                     lane_exist[i] = 1 # mark lane as exist
                     max_seg = max(segments, key=len)
 
-                    # # backproject lane in 2D pixel to 3D world to find lane type
-                    # mid_pixel = max_seg[len(max_seg) // 2] # (x, y)
-                    # rgb = image_depth[mid_pixel[1], mid_pixel[0]]
-                    # R = rgb[0]
-                    # G = rgb[1]
-                    # B = rgb[2]
-                    # normalized = (R + G * 256 + B * 256 * 256) / (256 * 256 * 256 - 1)
-                    # depth_in_meters = 1000 * normalized
-                    # lanepoint = self.lanemarkings.calculate_waypoint_from_2Dlane(mid_pixel[0], mid_pixel[1], i, depth_in_meters, self.camera_depth)
-                    # self.world.debug.draw_point(lanepoint, size=0.05, life_time=2 * (1/cfg.fps), persistent_lines=False)    
+                    # backproject lane in 2D pixel to 3D world to find lane type
+                    mid_pixel = max_seg[len(max_seg) // 2] # (x, y)
+                    lane_marking_type = self.lanemarkings.calculate_lane_marking_type_from_2Dlane(mid_pixel, i, image_depth, self.camera_depth)
+                    # self.world.debug.draw_point(w, size=0.2, color=carla.Color(255,255,0), life_time=2 * (1/cfg.fps), persistent_lines=False)    
 
-                    lane_cls[i] = 2
+                    lane_cls[i] = lane_marking_type
 
                     cv2.polylines(inst_background, np.int32([max_seg]), isClosed=False, color=self.colors[i], thickness=5)
                     cv2.polylines(inst_background_display, np.int32([max_seg]), isClosed=False, color=self.colors_display[i], thickness=5)
@@ -220,20 +215,22 @@ class CarlaGame():
                 self.save_counter += 1
 
 
-    def should_quit(self):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                return True
-        return False
-    
-
     def run(self):
         with CarlaSyncMode(self.world, self.tm, self.camera_rgb, self.camera_semseg, self.camera_depth, fps=cfg.fps) as sync_mode:
             try:
                 while True:
-                    if self.should_quit():
-                        break
-
+                    for event in pygame.event.get():
+                        if event.type == pygame.QUIT:
+                            pygame.quit()
+                            exit()
+                        elif event.type == pygame.KEYDOWN:
+                            if event.key == pygame.K_LEFT:
+                                print("left")
+                                self.tm.force_lane_change(self.ego_vehicle, False)
+                            elif event.key == pygame.K_RIGHT:
+                                print("right")
+                                self.tm.force_lane_change(self.ego_vehicle, True)
+                    
                     if not cfg.auto_run:
                         waiting = True
                         while waiting:
@@ -265,7 +262,7 @@ class CarlaGame():
 
                     if cfg.draw3DLanes:
                         for waypoint in waypoint_list:
-                            self.world.debug.draw_point(location=waypoint.transform.location, size=0.05, life_time=cfg.number_of_lanepoints/cfg.fps, persistent_lines=False)                    
+                            self.world.debug.draw_point(location=waypoint.transform.location, size=0.05, life_time=2 * (1/cfg.fps), persistent_lines=False)                    
                     
                     # Show lanes on pygame
                     self.render_display(image_rgb, image_depth, lanes_list)
