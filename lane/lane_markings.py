@@ -119,116 +119,95 @@ class LaneMarkings():
         Returns:
             List of 2D-points, where the elements of the list are tuples. Each tuple contains an x and y value.
         """
-        flat_lane_list_a = []
-        flat_lane_list_b = []
         lane_list = list(filter(lambda x: x!= None, lane_list))
-        
+
+        flat_lane_list = []  
+        flat_lane_list_a = []
+
         if lane_list:    
             last_lanepoint = lane_list[0]
             
         for lanepoint in lane_list:
-            if(lanepoint and last_lanepoint):
-                # Draw outer lanes not on junction
-                # calculate distance between current point and previous point
-                distance = math.sqrt(math.pow(lanepoint.x-last_lanepoint.x ,2)+math.pow(lanepoint.y-last_lanepoint.y ,2)+math.pow(lanepoint.z-last_lanepoint.z ,2))
-            
-                # Check of there's a hole in the list
-                if distance > cfg.meters_per_frame * 3: # if distance is too large, there is a gap
-                    flat_lane_list_b = flat_lane_list_a
-                    flat_lane_list_a = []
-                    last_lanepoint = lanepoint
-                    continue
-                
-                last_lanepoint = lanepoint
-                flat_lane_list_a.append([lanepoint.x, lanepoint.y, lanepoint.z, 1.0])
-
-            else:
-                # Just append a "Null" value
-                flat_lane_list_a.append([None, None, None, None])
+            # Draw outer lanes not on junction
+            # calculate distance between current point and previous point
+            distance = math.sqrt(math.pow(lanepoint.x-last_lanepoint.x ,2)+math.pow(lanepoint.y-last_lanepoint.y ,2)+math.pow(lanepoint.z-last_lanepoint.z ,2))
         
-        if flat_lane_list_a:
-            world_points = np.float32(flat_lane_list_a).T
-            
-            # This (4, 4) matrix transforms the points from world to sensor coordinates.
-            world_2_camera = np.array(camera_rgb.get_transform().get_inverse_matrix())
-            
-            # Transform the points from world space to camera space.
-            sensor_points = np.dot(world_2_camera, world_points)
-            
-            # Now we must change from UE4's coordinate system to a "standard" one
-            # (x, y ,z) -> (y, -z, x)
-            point_in_camera_coords = np.array([sensor_points[1],
-                                               sensor_points[2] * -1,
-                                               sensor_points[0]])
-            
-            # Finally we can use our intrinsic matrix to do the actual 3D -> 2D.
-            points_2d = np.dot(self.cameraMatrix, point_in_camera_coords)
-            
-            # Remember to normalize the x, y values by the 3rd value.
-            points_2d = np.array([points_2d[0, :] / points_2d[2, :],
-                                  points_2d[1, :] / points_2d[2, :],
-                                  points_2d[2, :]])
-            
-            # visualize everything on a screen, the points that are out of the screen
-            # must be discarted, the same with points behind the camera projection plane.
-            points_2d = points_2d.T
-            points_in_canvas_mask = (points_2d[:, 0] > 0.0) & (points_2d[:, 0] < cfg.image_width) & \
-                                    (points_2d[:, 1] > 0.0) & (points_2d[:, 1] < cfg.image_height) & \
-                                    (points_2d[:, 2] > 0.0)
-            
-            points_2d = points_2d[points_in_canvas_mask]
-            
-            # Extract the screen coords (xy) as integers.
-            x_coord = points_2d[:, 0].astype(int)
-            y_coord = points_2d[:, 1].astype(int)
-        else:
-            x_coord = []
-            y_coord = []
+            # Check of there's a hole in the list
+            if distance > cfg.meters_per_frame * 3: # if distance is too large, there is a gap
+                flat_lane_list.append(flat_lane_list_a.copy())
+                flat_lane_list_a = []
+                last_lanepoint = lanepoint
+                continue
+                            
+            last_lanepoint = lanepoint
+            flat_lane_list_a.append([lanepoint.x, lanepoint.y, lanepoint.z, 1.0])
 
-        if flat_lane_list_b:
-            world_points = np.float32(flat_lane_list_b).T
-            
-            # This (4, 4) matrix transforms the points from world to sensor coordinates.
-            world_2_camera = np.array(camera_rgb.get_transform().get_inverse_matrix())
-            
-            # Transform the points from world space to camera space.
-            sensor_points = np.dot(world_2_camera, world_points)
-            
-            # Now we must change from UE4's coordinate system to a "standard" one
-            # (x, y ,z) -> (y, -z, x)
-            point_in_camera_coords = np.array([sensor_points[1],
-                                               sensor_points[2] * -1,
-                                               sensor_points[0]])
-            
-            # Finally we can use our intrinsic matrix to do the actual 3D -> 2D.
-            points_2d = np.dot(self.cameraMatrix, point_in_camera_coords)
-            
-            # Remember to normalize the x, y values by the 3rd value.
-            points_2d = np.array([points_2d[0, :] / points_2d[2, :],
-                                  points_2d[1, :] / points_2d[2, :],
-                                  points_2d[2, :]])
-            
-            # visualize everything on a screen, the points that are out of the screen
-            # must be discarted, the same with points behind the camera projection plane.
-            points_2d = points_2d.T
-            points_in_canvas_mask = (points_2d[:, 0] > 0.0) & (points_2d[:, 0] < cfg.image_width) & \
-                                    (points_2d[:, 1] > 0.0) & (points_2d[:, 1] < cfg.image_height) & \
-                                    (points_2d[:, 2] > 0.0)
-            
-            points_2d = points_2d[points_in_canvas_mask]
-            
-            old_x_coord = np.insert(x_coord, 0, -1)
-            old_y_coord = np.insert(y_coord, 0, -1)
-            
-            # Extract the screen coords (xy) as integers.
-            new_x_coord = points_2d[:, 0].astype(int)
-            new_y_coord = points_2d[:, 1].astype(int)
+        flat_lane_list.append(flat_lane_list_a.copy()) # append the last segment
+        
+        flat_lane_list_2D = []
+        for segment in flat_lane_list:
+            if segment:
+                world_points = np.float32(segment).T
+                
+                # This (4, 4) matrix transforms the points from world to sensor coordinates.
+                world_2_camera = np.array(camera_rgb.get_transform().get_inverse_matrix())
+                
+                # Transform the points from world space to camera space.
+                sensor_points = np.dot(world_2_camera, world_points)
+                
+                # Now we must change from UE4's coordinate system to a "standard" one
+                # (x, y ,z) -> (y, -z, x)
+                point_in_camera_coords = np.array([sensor_points[1],
+                                                sensor_points[2] * -1,
+                                                sensor_points[0]])
+                
+                # Finally we can use our intrinsic matrix to do the actual 3D -> 2D.
+                points_2d = np.dot(self.cameraMatrix, point_in_camera_coords)
+                
+                # Remember to normalize the x, y values by the 3rd value.
+                points_2d = np.array([points_2d[0, :] / points_2d[2, :],
+                                    points_2d[1, :] / points_2d[2, :],
+                                    points_2d[2, :]])
+                
+                # visualize everything on a screen, the points that are out of the screen
+                # must be discarted, the same with points behind the camera projection plane.
+                points_2d = points_2d.T
+                points_in_canvas_mask = (points_2d[:, 0] > 0.0) & (points_2d[:, 0] < cfg.image_width) & \
+                                        (points_2d[:, 1] > 0.0) & (points_2d[:, 1] < cfg.image_height) & \
+                                        (points_2d[:, 2] > 0.0)
+                
+                points_2d = points_2d[points_in_canvas_mask]
+                
+                # Extract the screen coords (xy) as integers.
+                x_coord = points_2d[:, 0].astype(int)
+                y_coord = points_2d[:, 1].astype(int)
+            else:
+                x_coord = np.array([])
+                y_coord = np.array([])
 
-            # x_coord = [x1, x2, ..., -1, x100, x101, ...]
-            # x1, x2, are from new_x_coord, representing first segment (closer to bottom of screen)
-            # x100, x101 are from old_x_coord, representing second segment (closer to top of screen)
-            x_coord = np.concatenate((new_x_coord, old_x_coord), axis=None) 
-            y_coord = np.concatenate((new_y_coord, old_y_coord), axis=None)
+            flat_lane_list_2D.append((x_coord.copy(), y_coord.copy()))
+
+        x_coord = []
+        y_coord = []
+        for seg_2D in flat_lane_list_2D[:-1]: # for all segments except last one
+            seg_2D_x = seg_2D[0]
+            seg_2D_y = seg_2D[1]
+
+            seg_2D_x = np.concatenate([seg_2D_x, [-1]]) # append -1 to the end of that segment
+            seg_2D_y = np.concatenate([seg_2D_y, [-1]]) # append -1 to the end of that segment
+
+            x_coord.append(seg_2D_x)
+            y_coord.append(seg_2D_y)
+
+        x_coord.append(flat_lane_list_2D[-1][0]) # add the last segment
+        y_coord.append(flat_lane_list_2D[-1][1]) # add the last segment
+
+        x_coord = np.concatenate(x_coord)
+        y_coord = np.concatenate(y_coord)
+
+        # x_coord = [x1, x2, ..., -1, x100, x101, ...]
+        # x1, x2, are from new_x_coord, representing first segment (closer to bottom of screen)
+        # x100, x101 are from old_x_coord, representing second segment (closer to top of screen)
 
         return list(zip(x_coord, y_coord))
 

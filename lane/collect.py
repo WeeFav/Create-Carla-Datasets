@@ -7,6 +7,7 @@ import pygame
 import os
 import argparse
 from PIL import Image
+import time
 
 import config as cfg
 from carla_sync_mode import CarlaSyncMode
@@ -35,14 +36,15 @@ class CarlaGame():
         # Traffic manager
         self.tm = self.client.get_trafficmanager()
         self.tm.set_hybrid_physics_mode(True)
+        self.tm.set_respawn_dormant_vehicles(True)
 
         blueprint_library = self.world.get_blueprint_library()
-        spawn_points = self.world.get_map().get_spawn_points()
+        self.spawn_points = self.world.get_map().get_spawn_points()
 
         # Spawn ego vehicle
         bp_ego_vehicle = random.choice(blueprint_library.filter('vehicle.ford.mustang'))
         bp_ego_vehicle.set_attribute('role_name', 'hero')
-        self.ego_vehicle = self.world.spawn_actor(bp_ego_vehicle, random.choice(spawn_points))
+        self.ego_vehicle = self.world.spawn_actor(bp_ego_vehicle, random.choice(self.spawn_points))
         self.ego_vehicle.set_autopilot(True, self.tm.get_port())
         self.tm.update_vehicle_lights(self.ego_vehicle, True)
         # self.tm.keep_right_rule_percentage(self.ego_vehicle, 10)
@@ -71,11 +73,13 @@ class CarlaGame():
         self.camera_depth = self.world.spawn_actor(bp_camera_depth, camera_spawnpoint, attach_to=self.ego_vehicle)
 
         # Spawn vehicles
-        vehicle_blueprints = blueprint_library.filter('*vehicle*')
+        self.vehicle_blueprints = blueprint_library.filter('*vehicle*')
+        self.vehicle_state = {}
+        self.respawn_interval = cfg.respawn * cfg.fps
 
         i = 0
         while i < cfg.num_vehicles:
-            vehicle = self.world.try_spawn_actor(random.choice(vehicle_blueprints), random.choice(spawn_points))
+            vehicle = self.world.try_spawn_actor(random.choice(self.vehicle_blueprints), random.choice(self.spawn_points))
             if vehicle is not None:
                 vehicle.set_autopilot(True, self.tm.get_port())
                 self.tm.update_vehicle_lights(vehicle, True)
@@ -103,7 +107,7 @@ class CarlaGame():
             os.makedirs(self.img_folder, exist_ok=True)
             os.makedirs(self.seg_folder, exist_ok=True)
         
-            self.save_tick = cfg.save_freq * cfg.fps
+            self.save_interval = cfg.save_freq * cfg.fps
             self.save_counter = 0
             self.skip_counter = 0
             self.skip_interval = cfg.skip_at_traffic_light_interval
@@ -111,6 +115,12 @@ class CarlaGame():
             txt_file_path = os.path.join(run_root, "train_gt.txt")
             open(txt_file_path, "w").close()
             self.txt_fp = open(txt_file_path, "a", buffering=1)
+
+    def get_vehicle_state(self, vehicle):
+        t = vehicle.get_transform().location
+        v = vehicle.get_velocity()
+        return (round(t.x, 2), round(t.y, 2), round(t.z, 2),
+                round(v.x, 2), round(v.y, 2), round(v.z, 2))
 
 
     def reshape_image(self, image):
@@ -156,7 +166,7 @@ class CarlaGame():
                 segment = [] # store all coordinates for a segment
 
                 for x, y in lane:
-                    if x == -2:
+                    if x == -2 or x == -1:
                         if segment: # avoid appending empty segment
                             segments.append(segment)
                             segment = []
@@ -170,10 +180,10 @@ class CarlaGame():
                     lane_exist[i] = 1 # mark lane as exist
                     max_seg = max(segments, key=len)
 
-                    # backproject lane in 2D pixel to 3D world to find lane type
+                    # # backproject lane in 2D pixel to 3D world to find lane type
                     mid_pixel = max_seg[len(max_seg) // 2] # (x, y)
                     lane_marking_type = self.lanemarkings.calculate_lane_marking_type_from_2Dlane(mid_pixel, i, image_depth, self.camera_depth)
-                    # self.world.debug.draw_point(w, size=0.2, color=carla.Color(255,255,0), life_time=2 * (1/cfg.fps), persistent_lines=False)    
+                    # # self.world.debug.draw_point(w, size=0.2, color=carla.Color(255,255,0), life_time=2 * (1/cfg.fps), persistent_lines=False)    
 
                     lane_cls[i] = lane_marking_type
 
@@ -185,7 +195,7 @@ class CarlaGame():
         cv2.waitKey(1)
 
         if cfg.saving:
-            if self.tick_counter % self.save_tick == 0:
+            if self.tick_counter % self.save_interval == 0:
                 if self.ego_vehicle.is_at_traffic_light():
                     if self.skip_counter % self.skip_interval != 0:
                         self.skip_counter += 1
@@ -242,6 +252,35 @@ class CarlaGame():
                             if keys[pygame.K_SPACE]:
                                 waiting = False
 
+                    if self.tick_counter % self.respawn_interval == 0:
+                        print("Checking vehicle states...")
+                        vehicles = self.world.get_actors().filter("vehicle.*")
+                        
+                        for vehicle in vehicles:
+                            # Skip ego vehicle
+                            role_name = vehicle.attributes.get("role_name", "")
+                            if role_name == "hero":
+                                continue
+
+                            current_state = self.get_vehicle_state(vehicle)
+                            if vehicle.id in self.vehicle_state:
+                                if current_state == self.vehicle_state[vehicle.id]:
+                                    print(f"[STUCK] Vehicle {vehicle.id} hasn't moved. Respawning...")
+                                    vehicle.destroy()
+
+                                    # Respawn at a random valid point
+                                    while True:
+                                        new_vehicle = self.world.try_spawn_actor(random.choice(self.vehicle_blueprints), random.choice(self.spawn_points))
+                                        if new_vehicle:
+                                            new_vehicle.set_autopilot(True, self.tm.get_port())
+                                            self.tm.update_vehicle_lights(new_vehicle, True)
+                                            self.vehicle_state[new_vehicle.id] = self.get_vehicle_state(new_vehicle)
+                                            break
+                                else:
+                                    self.vehicle_state[vehicle.id] = current_state
+                            else:
+                                self.vehicle_state[vehicle.id] = current_state
+                
                     # clock tick
                     self.pygame_clock.tick()
                     snapshot, image_rgb, image_semseg, image_depth = sync_mode.tick(timeout=1.0)

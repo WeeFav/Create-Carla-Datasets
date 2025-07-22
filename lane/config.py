@@ -19,14 +19,15 @@ for y in range(row_anchor_start, image_height, 10):
 	h_samples.append(y)
 
 # World
-town = 'Town04_Opt'
-num_vehicles = 300
+town = 'Town10HD_Opt'
+num_vehicles = 50
 # [ClearNoon, CloudyNoon, WetNoon, WetCloudyNoon, SoftRainNoon, MidRainyNoon, HardRainNoon, ClearSunset, CloudySunset, WetSunset, WetCloudySunset, SoftRainSunset, MidRainSunset, HardRainSunset]
-weather = carla.WeatherParameters.ClearNoon
+weather = carla.WeatherParameters.CloudySunset
 
 # Mode
 auto_run = True
-saving = False
+saving = True
 data_root = "C:\\Users\\marvi\\Datasets\\Lane\\CarlaLane"
 save_freq = 4 # in seconds
-skip_at_traffic_light_interval = 4 # number of saved frames
+skip_at_traffic_light_interval = 5 # number of saved frames
+respawn = 60 # in seconds

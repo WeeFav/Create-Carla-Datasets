@@ -2,13 +2,13 @@ import cv2
 from PIL import Image
 import numpy as np
 
-img = cv2.imread("./CULane/4_img.png")
-label = np.asarray(Image.open("./CULane/4_label.png"))
+img = cv2.imread("./CULane/0_img.png")
+label = np.asarray(Image.open("./CULane/0_label.png"))
 
 print(img.shape)
 print(label.shape)
 
-np.savetxt("./CULane/vis.txt", label, fmt="%d")
+# np.savetxt("./CULane/vis.txt", label, fmt="%d")
 
 for r in range(label.shape[0]):
     for c in range(label.shape[1]):
