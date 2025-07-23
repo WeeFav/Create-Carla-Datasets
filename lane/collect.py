@@ -29,7 +29,7 @@ class CarlaGame():
         self.client = carla.Client('localhost', 2000)
         self.world = self.client.load_world(cfg.town)
         weather = cfg.weather
-        # weather = carla.WeatherParameters(sun_altitude_angle=-90)
+        # weather = carla.WeatherParameters(cloudiness=60, sun_altitude_angle=8, precipitation=50, precipitation_deposits=30)
         self.world.set_weather(weather)
         self.map = self.world.get_map()
 
@@ -156,7 +156,7 @@ class CarlaGame():
         inst_background_display = np.zeros_like(image_rgb)
 
         lane_exist = [0] * 4
-        lane_cls = [-1] * 4
+        lane_cls = [0] * 4
 
         # Draw lanepoints of every lane on pygame window
         if(cfg.render_lanes):
@@ -221,8 +221,12 @@ class CarlaGame():
                 s = " ".join(s) + "\n"
                 self.txt_fp.write(s)
 
-                print("saved: ", self.save_counter)
+                print("saved:", self.save_counter)
+
                 self.save_counter += 1
+
+                if self.save_counter == cfg.save_num:
+                    sys.exit()
 
 
     def run(self):

@@ -2,8 +2,8 @@ import cv2
 from PIL import Image
 import numpy as np
 
-img = cv2.imread("./CULane/0_img.png")
-label = np.asarray(Image.open("./CULane/0_label.png"))
+img = cv2.imread("./CULane/26_img.png")
+label = np.asarray(Image.open("./CULane/26_label.png"))
 
 print(img.shape)
 print(label.shape)

@@ -105,6 +105,48 @@ class LaneMarkings():
             self.draw_points(self.client, outer_right_lanemarking)
         
         return self.lanes
+    
+    def my_calculate3DLanepoints(self, waypoint):
+        orientationVec = waypoint.transform.get_forward_vector()
+        
+        length = math.sqrt(orientationVec.y*orientationVec.y+orientationVec.x*orientationVec.x)
+        abVec = carla.Location(orientationVec.y,-orientationVec.x,0) / length * 0.5* waypoint.lane_width
+
+        if not waypoint.is_junction:
+            left_lanemarking = waypoint.transform.location + abVec
+            right_lanemarking = waypoint.transform.location - abVec 
+        else:
+            left_lanemarking = None
+            right_lanemarking = None
+        self.lanes[1].append(left_lanemarking)
+        self.lanes[2].append(right_lanemarking)
+
+
+        # Calculate left lanes
+        left_waypoint = waypoint.get_left_lane()
+        if (left_waypoint and left_waypoint.lane_type == carla.LaneType.Driving and not left_waypoint.is_junction):
+            outer_left_lanemarking = waypoint.transform.location + 3 * abVec
+        else:
+            outer_left_lanemarking = None
+        self.lanes[0].append(outer_left_lanemarking)
+
+
+        # Calculate right lanes
+        right_waypoint = waypoint.get_right_lane()
+        if (right_waypoint and right_waypoint.lane_type == carla.LaneType.Driving and not right_waypoint.is_junction):
+            outer_right_lanemarking = waypoint.transform.location - 3 * abVec
+        else:
+            outer_right_lanemarking = None
+        self.lanes[3].append(outer_right_lanemarking)
+
+
+        if cfg.draw3DLanes:
+            self.draw_points(self.client, left_lanemarking)
+            self.draw_points(self.client, right_lanemarking) 
+            self.draw_points(self.client, outer_left_lanemarking)
+            self.draw_points(self.client, outer_right_lanemarking)
+        
+        return self.lanes
 
 
     def calculate2DLanepoints(self, camera_rgb, lane_list):
@@ -322,7 +364,7 @@ class LaneMarkings():
         x_lanes_list = []    # only x values of lanes
 
         for lanepoint in waypoint_list:
-            lanes_3Dcoords = self.calculate3DLanepoints(lanepoint)
+            lanes_3Dcoords = self.my_calculate3DLanepoints(lanepoint)
         
         for lane_3Dcoords in lanes_3Dcoords:
             lane = self.calculate2DLanepoints(camera_rgb, lane_3Dcoords)
@@ -364,11 +406,11 @@ class LaneMarkings():
         lane_marking_type, side = self.get_lane_marking_type(lanepoint)
 
         if lane_marking_type == carla.LaneMarkingType.Broken:
-            return 0
-        elif lane_marking_type == carla.LaneMarkingType.Solid or lane_marking_type == carla.LaneMarkingType.SolidSolid:
             return 1
-        else:
+        elif lane_marking_type == carla.LaneMarkingType.Solid or lane_marking_type == carla.LaneMarkingType.SolidSolid:
             return 2
+        else:
+            return 3
 
     def get_lane_marking_type(self, location):        
         # Step 1: Project to closest waypoint
