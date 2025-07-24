@@ -364,7 +364,7 @@ class LaneMarkings():
         x_lanes_list = []    # only x values of lanes
 
         for lanepoint in waypoint_list:
-            lanes_3Dcoords = self.my_calculate3DLanepoints(lanepoint)
+            lanes_3Dcoords = self.calculate3DLanepoints(lanepoint)
         
         for lane_3Dcoords in lanes_3Dcoords:
             lane = self.calculate2DLanepoints(camera_rgb, lane_3Dcoords)

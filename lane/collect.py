@@ -28,9 +28,7 @@ class CarlaGame():
 
         self.client = carla.Client('localhost', 2000)
         self.world = self.client.load_world(cfg.town)
-        weather = cfg.weather
-        # weather = carla.WeatherParameters(cloudiness=60, sun_altitude_angle=8, precipitation=50, precipitation_deposits=30)
-        self.world.set_weather(weather)
+        self.world.set_weather(cfg.weather)
         self.map = self.world.get_map()
 
         # Traffic manager
@@ -74,7 +72,7 @@ class CarlaGame():
 
         # Spawn vehicles
         self.vehicle_blueprints = blueprint_library.filter('*vehicle*')
-        self.vehicle_state = {}
+        self.vehicle_state = {self.ego_vehicle.id: self.get_vehicle_state(self.ego_vehicle)}
         self.respawn_interval = cfg.respawn * cfg.fps
 
         i = 0
@@ -89,7 +87,8 @@ class CarlaGame():
 
         self.tick_counter = 0
         self.colors = [[1,1,1], [2,2,2], [3,3,3], [4,4,4]]
-        self.colors_display = [[70,70,70], [120,120,120], [20,20,20], [170,170,170]]
+        self.RGB_colors = [(0, 255, 0), (255, 0, 0), (255, 255, 0), (0, 0, 255)]
+        self.BGR_colors = [(0, 255, 0), (0, 0, 255), (0, 255, 255), (255, 0, 0)]
 
         # Create opencv window
         cv2.namedWindow("inst_background", cv2.WINDOW_NORMAL)
@@ -103,7 +102,7 @@ class CarlaGame():
                 run_root = os.path.join(cfg.data_root, f"{cfg.town}")
             self.img_folder = os.path.join(run_root, "img")
             self.seg_folder = os.path.join(run_root, "seg")
-            os.makedirs(run_root, exist_ok=True)
+            os.makedirs(run_root, exist_ok=False)
             os.makedirs(self.img_folder, exist_ok=True)
             os.makedirs(self.seg_folder, exist_ok=True)
         
@@ -188,7 +187,7 @@ class CarlaGame():
                     lane_cls[i] = lane_marking_type
 
                     cv2.polylines(inst_background, np.int32([max_seg]), isClosed=False, color=self.colors[i], thickness=5)
-                    cv2.polylines(inst_background_display, np.int32([max_seg]), isClosed=False, color=self.colors_display[i], thickness=5)
+                    cv2.polylines(inst_background_display, np.int32([max_seg]), isClosed=False, color=self.BGR_colors[i], thickness=5)
         
         pygame.display.flip()
         cv2.imshow("inst_background", inst_background_display)
@@ -196,16 +195,19 @@ class CarlaGame():
 
         if cfg.saving:
             if self.tick_counter % self.save_interval == 0:
-                if self.ego_vehicle.is_at_traffic_light():
+                if self.ego_vehicle.is_at_traffic_light() or self.get_vehicle_state(self.ego_vehicle) == self.vehicle_state[self.ego_vehicle.id]:
                     if self.skip_counter % self.skip_interval != 0:
                         self.skip_counter += 1
-                        print("save skipped at traffic light")
+                        print("save skipped at traffic")
                         return
                     else:
                         self.skip_counter += 1
                 else:
                     self.skip_counter = 0 # reset skip counter
+
                     
+                self.vehicle_state[self.ego_vehicle.id] = self.get_vehicle_state(self.ego_vehicle)
+
                 # saving images
                 image_rgb = Image.fromarray(image_rgb)
                 inst_background = Image.fromarray(inst_background[:,:,0].astype(np.uint8), mode="L")
