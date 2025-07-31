@@ -1,2 +1,4 @@
 carla.Transform.get_matrix() - local to world
 carla.Transform.get_inverse_matrix() - world to local
+
+Vehicle dimensions: Length=4.72m, Width=1.89m, Height=1.30m

@@ -1,4 +1,6 @@
 import numpy as np
+import config as cfg
+import math
 
 def get_corners(vehicle, world_to_lidar_mat):
     bb = vehicle.bounding_box
@@ -78,7 +80,7 @@ def get_bboxes(world, pointcloud, sensor_lidar):
         corners_lidar: (8, 3) np.ndarray, ordered corners in LiDAR frame
         bottom_center: (3,) np.ndarray, xyz coordinate of the bottom center of the object in lidar frame
         dims: (3,) np.ndarray, height, width, length in object frame
-        rotation_z: rotation around the lidar frame's z axis
+        rotation_z: rotation around the lidar frame's z axis in radians
 
     To get 8 corners in lidar frame, first find 8 corners with height, width, length, then rotate around z-axis, then translate to center
     """
@@ -92,11 +94,19 @@ def get_bboxes(world, pointcloud, sensor_lidar):
         role_name = vehicle.attributes.get("role_name", "")
         if role_name == "hero":
             continue
+
+        # Skip vehicle with distance > 120 m
+        bb = vehicle.bounding_box
+        center_vehicle = np.array([bb.location.x, bb.location.y, bb.location.z, 1.0])
+        vehicle_to_world_mat = np.array(vehicle.get_transform().get_matrix())
+        center_world = vehicle_to_world_mat @ center_vehicle
+        center_lidar = (world_to_lidar_mat @ center_world)[:3]
+        if np.linalg.norm(center_lidar) > 120:
+            continue
         
         corners_lidar = get_corners(vehicle, world_to_lidar_mat)
 
         if is_visible_by_lidar(corners_lidar, pointcloud):
-            bb = vehicle.bounding_box
             length = bb.extent.x * 2
             width = bb.extent.y * 2
             height = bb.extent.z * 2
@@ -111,13 +121,73 @@ def get_bboxes(world, pointcloud, sensor_lidar):
             # Forward vector points from rear to front
             forward_vec = front_mid - rear_mid
             yaw = np.arctan2(forward_vec[1], forward_vec[0])
-            yaw_deg = np.degrees(yaw)
 
             bboxes.append({
                 'corners_lidar': corners_lidar,
                 'bottom_center': bottom_center,
                 'dims': np.array([height, width, length]),
-                'rotation_z': yaw_deg
+                'rotation_z': yaw
             })
     
     return bboxes
+
+def corners_from_bbox(bbox):
+    bottom_center = bbox['bottom_center']
+    h, w, l = bbox['dims']
+    rotation_z = bbox['rotation_z']
+    
+    corners = np.array([
+        [ l/2, -w/2,  0],   # front-left-bottom
+        [ l/2,  w/2,  0],   # front-right-bottom
+        [-l/2,  w/2,  0],   # rear-right-bottom
+        [-l/2, -w/2,  0],   # rear-left-bottom
+        [ l/2, -w/2,  h],   # front-left-top
+        [ l/2,  w/2,  h],   # front-right-top
+        [-l/2,  w/2,  h],   # rear-right-top
+        [-l/2, -w/2,  h],   # rear-left-top
+    ])
+
+
+    # Rotation matrix around Z axis (LiDAR frame)
+    cos_yaw = np.cos(rotation_z)
+    sin_yaw = np.sin(rotation_z)
+    R = np.array([
+        [cos_yaw, -sin_yaw, 0],
+        [sin_yaw,  cos_yaw, 0],
+        [0,        0,       1]
+    ])
+
+    # Rotate and translate corners
+    corners_lidar = (R @ corners.T).T + bottom_center  # (8,3)
+
+    return corners_lidar
+
+
+def get_calib(camera_rgb, lidar):
+    # Intrinsic Matrix (K)
+    f = cfg.image_width / (2 * math.tan(cfg.fov * math.pi / 360))
+    c_x = cfg.image_width/2
+    c_y = cfg.image_height/2
+    K = np.float32([[f, 0, c_x],
+                    [0, f, c_y],
+                    [0, 0, 1]])        
+    
+    # Extrinsic Matrix (R|T)
+    world_to_camera_mat = np.array(camera_rgb.get_transform().get_inverse_matrix())
+    RT = world_to_camera_mat[0:3, :] # (3, 4)
+    
+    # Projection Matrix
+    P = K @ RT  # (3, 4)
+    
+    # Lidar to world
+    lidar_to_world_mat = np.array(lidar.get_transform().get_matrix())
+    # World to camera
+    world_to_camera_mat = np.array(camera_rgb.get_transform().get_inverse_matrix())
+    # Lidar to camera
+    lidar_to_camera_mat = world_to_camera_mat @ lidar_to_world_mat # (4, 4)
+    Tr_velo_to_cam = lidar_to_camera_mat[0:3, :] # (3, 4)
+    
+    # R0_rect: 3×3 rectification matrix (identity for monocular setup)
+    R0_rect = np.identity(3)
+    
+    return P, Tr_velo_to_cam, R0_rect

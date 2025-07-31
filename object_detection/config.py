@@ -1,7 +1,7 @@
 import carla
 
 # Camera
-fps = 20
+fps = 10
 image_width = 1280
 image_height = 720
 fov = 90
@@ -14,8 +14,8 @@ render_lanes = True
 draw3DLanes = False
 
 # World
-town = 'Town10HD_Opt'
-num_vehicles = 50
+town = 'Town04_Opt'
+num_vehicles = 300
 # [ClearNoon, CloudyNoon, WetNoon, WetCloudyNoon, SoftRainNoon, MidRainyNoon, HardRainNoon, ClearSunset, CloudySunset, WetSunset, WetCloudySunset, SoftRainSunset, MidRainSunset, HardRainSunset]
 weather = carla.WeatherParameters.ClearNoon # clear_noon
 # weather = carla.WeatherParameters.HardRainSunset # hard_rain_sunset

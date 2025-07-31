@@ -30,15 +30,6 @@ class CarlaGame():
         self.vehicle_manager = VehicleManager(self.client, self.world, self.tm)
         self.ego_vehicle = self.vehicle_manager.spawn_ego_vehicle()
 
-
-        # Get the bounding box
-        bbox = self.ego_vehicle.bounding_box
-        # Vehicle dimensions
-        length = bbox.extent.x * 2  # CARLA gives half-length
-        width = bbox.extent.y * 2
-        height = bbox.extent.z * 2
-        print(f"Vehicle dimensions: Length={length:.2f}m, Width={width:.2f}m, Height={height:.2f}m")
-
         blueprint_library = self.world.get_blueprint_library()
         # Spawn rgb-cam and attach to vehicle
         bp_camera_rgb = blueprint_library.find('sensor.camera.rgb')
@@ -47,27 +38,13 @@ class CarlaGame():
         bp_camera_rgb.set_attribute('fov', f'{cfg.fov}')
         self.camera_spawnpoint = carla.Transform(carla.Location(x=1.0, z=1.65), carla.Rotation(pitch=-18.5)) # camera 5
         self.camera_rgb = self.world.spawn_actor(bp_camera_rgb, self.camera_spawnpoint, attach_to=self.ego_vehicle)
-
-        # Spawn semseg-cam and attach to vehicle
-        bp_camera_semseg = blueprint_library.find('sensor.camera.semantic_segmentation')
-        bp_camera_semseg.set_attribute('image_size_x', f'{cfg.image_width}')
-        bp_camera_semseg.set_attribute('image_size_y', f'{cfg.image_height}')
-        bp_camera_semseg.set_attribute('fov', f'{cfg.fov}')
-        self.camera_semseg = self.world.spawn_actor(bp_camera_semseg, self.camera_spawnpoint, attach_to=self.ego_vehicle)
-
-        # Spawn depth-cam and attach to vehicle
-        bp_camera_depth = blueprint_library.find('sensor.camera.depth')
-        bp_camera_depth.set_attribute('image_size_x', f'{cfg.image_width}')
-        bp_camera_depth.set_attribute('image_size_y', f'{cfg.image_height}')
-        bp_camera_depth.set_attribute('fov', f'{cfg.fov}')
-        self.camera_depth = self.world.spawn_actor(bp_camera_depth, self.camera_spawnpoint, attach_to=self.ego_vehicle)
         
         # Spawn lidar and attach to vehicle
         bp_lidar = blueprint_library.find("sensor.lidar.ray_cast")
         bp_lidar.set_attribute("range", "120") # 120 meter range for cars and foliage
-        bp_lidar.set_attribute("rotation_frequency", "20") # 20 match carla simulation fps
+        bp_lidar.set_attribute("rotation_frequency", "10")
         bp_lidar.set_attribute("channels", "64") # vertical resolution of the laser scanner is 64
-        bp_lidar.set_attribute("points_per_second", "1000000") # 100k points per cycle
+        bp_lidar.set_attribute("points_per_second", "1300000")
         bp_lidar.set_attribute("upper_fov", "2.0") # +2 up to -24.8 down
         bp_lidar.set_attribute("lower_fov", "-24.8")
         self.lidar_spawnpoint = carla.Transform(carla.Location(x=0, y=0, z=1.73))
@@ -76,10 +53,6 @@ class CarlaGame():
         self.vehicle_manager.spawn_vehicles()
 
         self.tick_counter = 0
-
-        self.RGB_colors = [(0, 255, 0), (255, 0, 0), (255, 255, 0), (0, 0, 255)]
-        self.BGR_colors = [(0, 255, 0), (0, 0, 255), (0, 255, 255), (255, 0, 0)]
-
 
         # Initialize Open3D Visualizer
         self.vis = o3d.visualization.Visualizer()
@@ -122,6 +95,19 @@ class CarlaGame():
         array = array[:, :, ::-1] # RGB
         return array # (H, W, C)
     
+
+    def crop_to_kitti(image):
+        target_h, target_w = 375, 1242
+        H, W, _ = image.shape
+
+        # Compute crop start indices (center crop)
+        top = (H - target_h) // 2
+        left = (W - target_w) // 2
+
+        # Perform crop
+        cropped = image[top:top + target_h, left:left + target_w, :]
+        return cropped
+    
     
     def reshape_pointcloud(self, pointcloud):
         array = np.frombuffer(pointcloud.raw_data, dtype=np.float32)
@@ -134,38 +120,7 @@ class CarlaGame():
         if blend:
             image_surface.set_alpha(100)
         surface.blit(image_surface, (0, 0))
-        
-    
-    def get_calib(self):
-        # Intrinsic Matrix (K)
-        self.f = cfg.image_width / (2 * math.tan(cfg.fov * math.pi / 360))
-        self.c_x = cfg.image_width/2
-        self.c_y = cfg.image_height/2
-        
-        K = np.float32([[self.f, 0, self.c_x],
-                        [0, self.f, self.c_y],
-                        [0, 0, 1]])        
-        
-        # Extrinsic Matrix (R|T)
-        T_world_to_cam = np.array(self.camera_rgb.get_transform().get_inverse_matrix())
-        RT = T_world_to_cam[0:3, :] # (3, 4)
-        
-        # Projection Matrix
-        P = K @ RT  # (3, 4)
-        
-        # Lidar to world
-        T_lidar_to_world = np.array(self.lidar.get_transform().get_matrix())
-        # World to camera
-        T_world_to_camera = np.array(self.camera.get_transform().get_inverse_matrix())
-        # Lidar to camera
-        Tr_lidar_to_cam = T_world_to_camera @ T_lidar_to_world # (4, 4)
-        Tr_velo_to_cam = Tr_lidar_to_cam[0:3, :] # (3, 4)
-        
-        # R0_rect: 3×3 rectification matrix (identity for monocular setup)
-        R0_rect = np.identity(3)
-        
-        return P, Tr_velo_to_cam, R0_rect
-    
+            
 
     def render_display(self, image_rgb, pointcloud, bboxes):
         # Draw the display.
@@ -178,13 +133,14 @@ class CarlaGame():
         self.pcd.colors = o3d.utility.Vector3dVector(np.tile([1.0, 1.0, 0.0], (pointcloud.shape[0], 1)))
         self.vis.update_geometry(self.pcd)
 
-        # Draw Bounding Boxes
         # Clear previous bounding boxes
         for line in self.bbox_lines:
             self.vis.remove_geometry(line, reset_bounding_box=False)
         self.bbox_lines = []
 
+        # Draw Bounding Boxes
         bboxes_corners = [bbox['corners_lidar'] for bbox in bboxes]
+
         for corners in bboxes_corners:
             # Apply transformation to Open3D coordinate frame
             corners = corners @ self.R_carla_to_open3d.T
@@ -211,8 +167,11 @@ class CarlaGame():
         pygame.display.flip()
 
 
+    def save():
+        pass
+
     def run(self):
-        with CarlaSyncMode(self.world, self.tm, self.camera_rgb, self.camera_semseg, self.camera_depth, self.lidar, fps=cfg.fps) as sync_mode:
+        with CarlaSyncMode(self.world, self.tm, self.camera_rgb, self.lidar, fps=cfg.fps) as sync_mode:
             try:
                 while True:
                     ### pygame interaction ###
@@ -249,11 +208,8 @@ class CarlaGame():
 
                     ### Run simulation ###
                     self.pygame_clock.tick()
-                    snapshot, sensor_rgb, sensor_semseg, sensor_depth, sensor_lidar = sync_mode.tick(timeout=1.0)
+                    snapshot, sensor_rgb, sensor_lidar = sync_mode.tick(timeout=1.0)
                     image_rgb = self.reshape_image(sensor_rgb)
-                    image_depth = self.reshape_image(sensor_depth)
-                    sensor_semseg.convert(carla.ColorConverter.CityScapesPalette)
-                    image_semseg = self.reshape_image(sensor_semseg)
                     pointcloud = self.reshape_pointcloud(sensor_lidar)
                     self.tick_counter += 1
 
@@ -265,8 +221,6 @@ class CarlaGame():
             finally:
                 self.vehicle_manager.destroy()
                 self.camera_rgb.destroy()
-                self.camera_semseg.destroy()
-                self.camera_depth.destroy()
                 self.lidar.destroy()
                 print("Cameras destroyed")
 

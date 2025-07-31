@@ -1,53 +1,50 @@
 import numpy as np
-import open3d as o3d
 
-# Assume you already have:
-# - self.pcd (PointCloud)
-# - self.vis (Visualizer)
-# - pointcloud: (N, 3)
-# - bboxes: list of np.array (8, 3) each, for all bounding boxes
+def generate_3d_bbox_corners(bottom_center, dims, rotation_z):
+    """
+    Generate 8 corners of a 3D bounding box in LiDAR frame.
 
-# Transform point cloud
-pointcloud = pointcloud @ self.R_carla_to_open3d.T
+    Args:
+        bottom_center (3,): [x, y, z] of the bottom center in LiDAR frame
+        dims (3,): [height, width, length] of the object
+        rotation_z: yaw rotation (rad) around LiDAR z-axis
 
-# Update point cloud
-self.pcd.points = o3d.utility.Vector3dVector(pointcloud)
-self.pcd.colors = o3d.utility.Vector3dVector(
-    np.tile([1.0, 1.0, 0.0], (pointcloud.shape[0], 1))
-)
-self.vis.update_geometry(self.pcd)
+    Returns:
+        corners_lidar: (8, 3) array of 3D bounding box corners in LiDAR frame
+                       order: [FLB, FRB, RRB, RLB, FLT, FRT, RRT, RLT]
+    """
+    h, w, l = dims
 
-# ---- Draw Bounding Boxes ----
-# Clear previous bounding boxes if necessary
-if hasattr(self, "bbox_lines"):
-    for line in self.bbox_lines:
-        self.vis.remove_geometry(line, reset_bounding_box=False)
-self.bbox_lines = []
+    # --- 1️⃣ Define corners in the object's local frame ---
+    # Origin: bottom center
+    # x-axis: forward, y-axis: left, z-axis: up
+    x_corners = np.array([ l/2,  l/2, -l/2, -l/2,  l/2,  l/2, -l/2, -l/2])
+    y_corners = np.array([ w/2, -w/2, -w/2,  w/2,  w/2, -w/2, -w/2,  w/2])
+    z_corners = np.array([ 0,    0,    0,    0,    h,    h,    h,    h   ])
 
-# Define line connections between the 8 corners
-lines = [
-    [0, 1], [1, 2], [2, 3], [3, 0],  # bottom rectangle
-    [4, 5], [5, 6], [6, 7], [7, 4],  # top rectangle
-    [0, 4], [1, 5], [2, 6], [3, 7]   # vertical edges
-]
+    corners_obj = np.vstack((x_corners, y_corners, z_corners))  # (3, 8)
 
-for corners in bboxes:
-    # Apply transformation to Open3D coordinate frame
-    corners_o3d = corners @ self.R_carla_to_open3d.T
+    # --- 2️⃣ Rotation matrix around Z axis ---
+    cos_yaw = np.cos(rotation_z)
+    sin_yaw = np.sin(rotation_z)
+    R = np.array([
+        [cos_yaw, -sin_yaw, 0],
+        [sin_yaw,  cos_yaw, 0],
+        [0,        0,       1]
+    ])
 
-    # Create LineSet
-    line_set = o3d.geometry.LineSet()
-    line_set.points = o3d.utility.Vector3dVector(corners_o3d)
-    line_set.lines = o3d.utility.Vector2iVector(lines)
+    # --- 3️⃣ Rotate and translate to LiDAR frame ---
+    corners_lidar = (R @ corners_obj).T + bottom_center  # (8,3)
 
-    # Set green color for all lines
-    colors = [[0.0, 1.0, 0.0] for _ in range(len(lines))]
-    line_set.colors = o3d.utility.Vector3dVector(colors)
+    return corners_lidar
 
-    # Add to visualizer and keep reference
-    self.vis.add_geometry(line_set)
-    self.bbox_lines.append(line_set)
 
-# Render updates
-self.vis.poll_events()
-self.vis.update_renderer()
+# =====================
+# Example usage:
+# =====================
+bottom_center = np.array([10.0, 5.0, 0.2])   # LiDAR coords
+dims = np.array([1.5, 2.0, 4.0])             # height, width, length
+rotation_z = np.deg2rad(30)                   # 30 degrees
+
+corners = generate_3d_bbox_corners(bottom_center, dims, rotation_z)
+print("Corners in LiDAR frame:\n", corners)
