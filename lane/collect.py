@@ -72,13 +72,18 @@ class CarlaGame():
 
         # Spawn vehicles
         self.vehicle_blueprints = blueprint_library.filter('*vehicle*')
+        if cfg.exclude_large_vehicle:
+            # Filter out large vehicles
+            large_vehicles_type = set(['truck', 'van', 'Bus'])
+            self.vehicle_blueprints = list(filter(lambda bp: bp.get_attribute('base_type').as_str() not in large_vehicles_type, self.vehicle_blueprints))
+        
         self.vehicle_state = {self.ego_vehicle.id: self.get_vehicle_state(self.ego_vehicle)}
         self.respawn_interval = cfg.respawn * cfg.fps
 
         i = 0
         while i < cfg.num_vehicles:
             vehicle = self.world.try_spawn_actor(random.choice(self.vehicle_blueprints), random.choice(self.spawn_points))
-            if vehicle is not None:
+            if vehicle:
                 vehicle.set_autopilot(True, self.tm.get_port())
                 self.tm.update_vehicle_lights(vehicle, True)
                 i += 1
@@ -114,6 +119,7 @@ class CarlaGame():
             txt_file_path = os.path.join(run_root, "train_gt.txt")
             open(txt_file_path, "w").close()
             self.txt_fp = open(txt_file_path, "a", buffering=1)
+
 
     def get_vehicle_state(self, vehicle):
         t = vehicle.get_transform().location
