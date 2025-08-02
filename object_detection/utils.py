@@ -122,8 +122,14 @@ def get_bboxes(world, pointcloud, sensor_lidar):
             forward_vec = front_mid - rear_mid
             yaw = np.arctan2(forward_vec[1], forward_vec[0])
 
+            if vehicle.attributes['base_type'] == 'bicycle':
+                object_type = 'Cyclist'
+            else:
+                object_type = 'Car'
+
             bboxes.append({
                 'corners_lidar': corners_lidar,
+                'object_type': object_type,
                 'bottom_center': bottom_center,
                 'dims': np.array([height, width, length]),
                 'rotation_z': yaw

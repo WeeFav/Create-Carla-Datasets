@@ -17,7 +17,7 @@ from vehicle_manager import VehicleManager
 import utils
 
 class CarlaGame():
-    def __init__(self):
+    def __init__(self, run_name):
         self.display = pygame.display.set_mode((cfg.image_width, cfg.image_height), pygame.HWSURFACE | pygame.DOUBLEBUF)
         self.pygame_clock = pygame.time.Clock()
 
@@ -87,6 +87,27 @@ class CarlaGame():
             [0, 4], [1, 5], [2, 6], [3, 7]   # vertical edges
         ]
 
+        # Create save path
+        if cfg.saving:
+            if run_name:
+                run_root = os.path.join(cfg.data_root, f"{cfg.town}_{run_name}")
+            else:
+                run_root = os.path.join(cfg.data_root, f"{cfg.town}")
+            self.calib_folder = os.path.join(run_root, "calib")
+            self.image_folder = os.path.join(run_root, "image_2")
+            self.label_folder = os.path.join(run_root, "label_2")
+            self.velodyne_folder = os.path.join(run_root, "velodyne")
+            os.makedirs(run_root, exist_ok=False)
+            os.makedirs(self.calib_folder, exist_ok=True)
+            os.makedirs(self.image_folder, exist_ok=True)
+            os.makedirs(self.label_folder, exist_ok=True)
+            os.makedirs(self.velodyne_folder, exist_ok=True)
+        
+            self.save_interval = cfg.save_freq * cfg.fps
+            self.save_counter = 0
+            self.skip_counter = 0
+            self.skip_interval = cfg.skip_at_traffic_light_interval
+
 
     def reshape_image(self, sensor):
         array = np.frombuffer(sensor.raw_data, dtype=np.dtype("uint8"))
@@ -96,7 +117,7 @@ class CarlaGame():
         return array # (H, W, C)
     
 
-    def crop_to_kitti(image):
+    def crop_to_kitti(self, image):
         target_h, target_w = 375, 1242
         H, W, _ = image.shape
 
@@ -167,8 +188,52 @@ class CarlaGame():
         pygame.display.flip()
 
 
-    def save():
-        pass
+    def save(self, P, Tr_velo_to_cam, R0_rect, image_rgb, bboxes, pointcloud):
+        ### calib ###
+        with open(os.path.join(self.calib_folder, f"{self.save_counter}.txt"), 'w') as f:
+            # Flatten row-major and write each matrix            
+            P2_flat = ' '.join(map(str, P.flatten()))
+            f.write(f"P2: {P2_flat}\n")
+            
+            R0_flat = ' '.join(map(str, R0_rect.flatten()))
+            f.write(f"R0_rect: {R0_flat}\n")
+            
+            Tr_flat = ' '.join(map(str, Tr_velo_to_cam.flatten()))
+            f.write(f"Tr_velo_to_cam: {Tr_flat}\n")
+
+
+        ### image ###
+        image_rgb = self.crop_to_kitti(image_rgb)
+        image_rgb = Image.fromarray(image_rgb)
+        image_rgb.save(os.path.join(self.image_folder, f"{self.save_counter}.png"))
+
+
+        ### label ###
+        with open(os.path.join(self.label_folder, f"{self.save_counter}.txt"), 'w') as f:
+            for bbox in bboxes:
+                object_type = bbox['object_type']
+                truncation = 0
+                occlusion = 0
+                alpha = 0
+                left = 0
+                top = 0
+                right = 0
+                bottom = 0
+                height = bbox['dims'][0]
+                width = bbox['dims'][1]
+                length = bbox['dims'][2]
+                x = bbox['bottom_center'][0]
+                y = bbox['bottom_center'][1]
+                z = bbox['bottom_center'][2]
+                rotation_y = bbox['rotation_z']
+                label_flat = ' '.join(map(str, [object_type, truncation, occlusion, alpha, left, top, right, bottom, height, width, length, x, y, z, rotation_y]))
+                f.write(f"{label_flat}\n")
+        
+        
+        ### velodyne ###
+        pointcloud = pointcloud.astype(np.float32)
+        pointcloud.tofile(os.path.join(self.velodyne_folder, f"{self.save_counter}.bin"))
+
 
     def run(self):
         with CarlaSyncMode(self.world, self.tm, self.camera_rgb, self.lidar, fps=cfg.fps) as sync_mode:
@@ -213,10 +278,35 @@ class CarlaGame():
                     pointcloud = self.reshape_pointcloud(sensor_lidar)
                     self.tick_counter += 1
 
+                    ### Get labels and calib ###
                     bboxes = utils.get_bboxes(self.world, pointcloud[:, :3], sensor_lidar)
+                    P, Tr_velo_to_cam, R0_rect = utils.get_calib(self.camera_rgb, self.lidar)
+
 
                     ### Render display ###
                     self.render_display(image_rgb, pointcloud[:, :3], bboxes)
+
+
+                    ### Save ###
+                    if cfg.saving:
+                        if self.tick_counter % self.save_interval == 0:
+                            if self.ego_vehicle.is_at_traffic_light() or self.vehicle_manager.get_vehicle_state(self.ego_vehicle) == self.vehicle_manager.vehicle_state[self.ego_vehicle.id]:
+                                if self.skip_counter % self.skip_interval != 0:
+                                    self.skip_counter += 1
+                                    print("save skipped at traffic")
+                                    return
+                                else:
+                                    self.skip_counter += 1
+                            else:
+                                self.skip_counter = 0 # reset skip counter
+
+                            self.vehicle_manager.vehicle_state[self.ego_vehicle.id] = self.vehicle_manager.get_vehicle_state(self.ego_vehicle)
+                            self.save(P, Tr_velo_to_cam, R0_rect, image_rgb, bboxes, pointcloud)
+                            print("saved:", self.save_counter)
+                            self.save_counter += 1
+                            if self.save_counter == cfg.save_num:
+                                sys.exit()
+
 
             finally:
                 self.vehicle_manager.destroy()
@@ -226,9 +316,13 @@ class CarlaGame():
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run_name", required=False, default=None)
+    args = parser.parse_args()
+
     pygame.init()
 
-    game = CarlaGame()
+    game = CarlaGame(args.run_name)
     game.run()
 
     pygame.quit()

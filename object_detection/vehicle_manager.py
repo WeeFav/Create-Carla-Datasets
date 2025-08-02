@@ -18,6 +18,8 @@ class VehicleManager():
 
         self.respawn_interval = cfg.respawn * cfg.fps
 
+        self.vehicle_state = {}
+
 
     def spawn_ego_vehicle(self):
         # Spawn ego vehicle
@@ -26,6 +28,7 @@ class VehicleManager():
         self.ego_vehicle = self.world.spawn_actor(bp_ego_vehicle, random.choice(self.spawn_points))
         self.ego_vehicle.set_autopilot(True, self.tm.get_port())
         self.tm.update_vehicle_lights(self.ego_vehicle, True)
+        self.vehicle_state[self.ego_vehicle.id] = self.get_vehicle_state(self.ego_vehicle)
 
         return self.ego_vehicle
     
@@ -33,7 +36,10 @@ class VehicleManager():
     def spawn_vehicles(self):
         # Spawn vehicles
         self.vehicle_blueprints = self.blueprint_library.filter('*vehicle*')
-        self.vehicle_state = {}
+        if cfg.exclude_large_vehicle:
+            # Filter out large vehicles
+            large_vehicles_type = set(['truck', 'van', 'Bus'])
+            self.vehicle_blueprints = list(filter(lambda bp: bp.get_attribute('base_type').as_str() not in large_vehicles_type, self.vehicle_blueprints))
         
         i = 0
         while i < cfg.num_vehicles:
