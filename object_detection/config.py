@@ -11,8 +11,8 @@ fov = 90
 town = 'Town10HD_Opt'
 num_vehicles = 50
 # [ClearNoon, CloudyNoon, WetNoon, WetCloudyNoon, SoftRainNoon, MidRainyNoon, HardRainNoon, ClearSunset, CloudySunset, WetSunset, WetCloudySunset, SoftRainSunset, MidRainSunset, HardRainSunset]
-weather = carla.WeatherParameters.ClearNoon # clear_noon
-# weather = carla.WeatherParameters.HardRainSunset # hard_rain_sunset
+# weather = carla.WeatherParameters.ClearNoon # clear_noon
+weather = carla.WeatherParameters.HardRainSunset # hard_rain_sunset
 # weather = carla.WeatherParameters( # night
 # 	sun_altitude_angle=-90,
 # )

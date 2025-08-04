@@ -294,7 +294,7 @@ class CarlaGame():
                                 if self.skip_counter % self.skip_interval != 0:
                                     self.skip_counter += 1
                                     print("save skipped at traffic")
-                                    return
+                                    continue
                                 else:
                                     self.skip_counter += 1
                             else:
