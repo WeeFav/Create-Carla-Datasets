@@ -42,7 +42,7 @@ def get_corners(vehicle, world_to_lidar_mat):
     return corners_lidar
 
 
-def is_visible_by_lidar(corners_lidar, pointcloud, min_points=10):
+def is_visible_by_lidar(corners_lidar, pointcloud, min_points=20):
     p0, p1, p3 = corners_lidar[0], corners_lidar[1], corners_lidar[3]
     
     # Axes of the box
@@ -95,13 +95,13 @@ def get_bboxes(world, pointcloud, sensor_lidar):
         if role_name == "hero":
             continue
 
-        # Skip vehicle with distance > 120 m
+        # Skip vehicle with distance > 100 m
         bb = vehicle.bounding_box
         center_vehicle = np.array([bb.location.x, bb.location.y, bb.location.z, 1.0])
         vehicle_to_world_mat = np.array(vehicle.get_transform().get_matrix())
         center_world = vehicle_to_world_mat @ center_vehicle
         center_lidar = (world_to_lidar_mat @ center_world)[:3]
-        if np.linalg.norm(center_lidar) > 120:
+        if np.linalg.norm(center_lidar) > 100:
             continue
         
         corners_lidar = get_corners(vehicle, world_to_lidar_mat)
@@ -122,8 +122,12 @@ def get_bboxes(world, pointcloud, sensor_lidar):
             forward_vec = front_mid - rear_mid
             yaw = np.arctan2(forward_vec[1], forward_vec[0])
 
-            if vehicle.attributes['base_type'] == 'bicycle':
-                object_type = 'Cyclist'
+
+            # Object type
+            if vehicle.attributes['base_type'] == 'motorcycle':
+                object_type = 'Motorcycle'
+            elif vehicle.type_id in set(['vehicle.carlamotors.european_hgv', 'vehicle.carlamotors.firetruck', 'vehicle.mitsubishi.fusorosa']):
+                object_type = 'Large'
             else:
                 object_type = 'Car'
 

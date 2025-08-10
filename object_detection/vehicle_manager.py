@@ -13,7 +13,13 @@ class VehicleManager():
         self.tm.set_hybrid_physics_mode(True)
         self.tm.set_respawn_dormant_vehicles(True)
 
-        self.blueprint_library = self.world.get_blueprint_library()
+        self.vehicle_blueprints = self.world.get_blueprint_library().filter('*vehicle*')
+        self.vehicle_blueprints = list(filter(lambda bp: bp.get_attribute('base_type').as_str() != 'bicycle', self.vehicle_blueprints)) # filter out bicycle
+        if cfg.exclude_large_vehicle:
+            # Further filter out large vehicles
+            large_vehicles_type = set(['truck', 'van', 'Bus'])
+            self.vehicle_blueprints = list(filter(lambda bp: bp.get_attribute('base_type').as_str() not in large_vehicles_type, self.vehicle_blueprints))
+
         self.spawn_points = self.world.get_map().get_spawn_points()
 
         self.respawn_interval = cfg.respawn * cfg.fps
@@ -23,7 +29,7 @@ class VehicleManager():
 
     def spawn_ego_vehicle(self):
         # Spawn ego vehicle
-        bp_ego_vehicle = random.choice(self.blueprint_library.filter('vehicle.ford.mustang'))
+        bp_ego_vehicle = random.choice(self.world.get_blueprint_library().filter('vehicle.ford.mustang'))
         bp_ego_vehicle.set_attribute('role_name', 'hero')
         self.ego_vehicle = self.world.spawn_actor(bp_ego_vehicle, random.choice(self.spawn_points))
         self.ego_vehicle.set_autopilot(True, self.tm.get_port())
@@ -34,13 +40,7 @@ class VehicleManager():
     
 
     def spawn_vehicles(self):
-        # Spawn vehicles
-        self.vehicle_blueprints = self.blueprint_library.filter('*vehicle*')
-        if cfg.exclude_large_vehicle:
-            # Filter out large vehicles
-            large_vehicles_type = set(['truck', 'van', 'Bus'])
-            self.vehicle_blueprints = list(filter(lambda bp: bp.get_attribute('base_type').as_str() not in large_vehicles_type, self.vehicle_blueprints))
-        
+        # Spawn vehicles        
         i = 0
         while i < cfg.num_vehicles:
             vehicle = self.world.try_spawn_actor(random.choice(self.vehicle_blueprints), random.choice(self.spawn_points))

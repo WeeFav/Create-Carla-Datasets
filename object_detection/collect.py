@@ -60,6 +60,8 @@ class CarlaGame():
         self.pcd = o3d.geometry.PointCloud()
         self.pcd.points = o3d.utility.Vector3dVector(np.random.rand(10, 3))
         self.vis.add_geometry(self.pcd)
+        mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=5, origin=[0, 0, 0])
+        self.vis.add_geometry(mesh_frame)
 
         render_opt = self.vis.get_render_option()
         render_opt.background_color = np.asarray([0, 0, 0])
@@ -71,12 +73,6 @@ class CarlaGame():
         ctr.set_constant_z_near(0.1)
         self.vis.reset_view_point(True)
         self.cam = ctr.convert_to_pinhole_camera_parameters()
-
-        self.R_carla_to_open3d = np.array([
-            [0, 1, 0],
-            [0, 0, -1],
-            [1, 0, 0]
-        ])
 
         self.bbox_lines = []
 
@@ -132,7 +128,7 @@ class CarlaGame():
     
     def reshape_pointcloud(self, pointcloud):
         array = np.frombuffer(pointcloud.raw_data, dtype=np.float32)
-        array = np.reshape(array, (-1, 4)) # x, y, z, r
+        array = np.reshape(array, (-1, 4)).copy() # x, y, z, r
         return array # (N, 4) pointcloud       
 
 
@@ -147,7 +143,7 @@ class CarlaGame():
         # Draw the display.
         self.draw_image(self.display, image_rgb)
 
-        pointcloud = pointcloud @ self.R_carla_to_open3d.T
+        pointcloud[:, 1] = -pointcloud[:, 1] # convert from UE to Kitti/Open3D
 
         # Update point cloud
         self.pcd.points = o3d.utility.Vector3dVector(pointcloud)
@@ -164,7 +160,7 @@ class CarlaGame():
 
         for corners in bboxes_corners:
             # Apply transformation to Open3D coordinate frame
-            corners = corners @ self.R_carla_to_open3d.T
+            corners[:, 1] = -corners[:, 1] # convert from UE to Kitti/Open3D
 
             # Create LineSet
             line_set = o3d.geometry.LineSet()
@@ -191,15 +187,21 @@ class CarlaGame():
     def save(self, P, Tr_velo_to_cam, R0_rect, image_rgb, bboxes, pointcloud):
         ### calib ###
         with open(os.path.join(self.calib_folder, f"{self.save_counter}.txt"), 'w') as f:
-            # Flatten row-major and write each matrix            
+            PX = ' '.join(map(str, np.zeros(12)))
+            f.write(f"P0: {PX}\n")
+            f.write(f"P1: {PX}\n")
+                        
             P2_flat = ' '.join(map(str, P.flatten()))
             f.write(f"P2: {P2_flat}\n")
+
+            f.write(f"P3: {PX}\n")
             
             R0_flat = ' '.join(map(str, R0_rect.flatten()))
             f.write(f"R0_rect: {R0_flat}\n")
             
             Tr_flat = ' '.join(map(str, Tr_velo_to_cam.flatten()))
             f.write(f"Tr_velo_to_cam: {Tr_flat}\n")
+            f.write(f"Tr_imu_to_velo: {PX}")
 
 
         ### image ###
@@ -223,15 +225,16 @@ class CarlaGame():
                 width = bbox['dims'][1]
                 length = bbox['dims'][2]
                 x = bbox['bottom_center'][0]
-                y = bbox['bottom_center'][1]
+                y = -bbox['bottom_center'][1] # convert from UE to Kitti/Open3D
                 z = bbox['bottom_center'][2]
-                rotation_y = bbox['rotation_z']
-                label_flat = ' '.join(map(str, [object_type, truncation, occlusion, alpha, left, top, right, bottom, height, width, length, x, y, z, rotation_y]))
+                rotation_z = -bbox['rotation_z'] # convert from UE to Kitti/Open3D
+                label_flat = ' '.join(map(str, [object_type, truncation, occlusion, alpha, left, top, right, bottom, height, width, length, x, y, z, rotation_z]))
                 f.write(f"{label_flat}\n")
         
         
         ### velodyne ###
         pointcloud = pointcloud.astype(np.float32)
+        pointcloud[:, 1] = -pointcloud[:, 1] # convert from UE to Kitti/Open3D
         pointcloud.tofile(os.path.join(self.velodyne_folder, f"{self.save_counter}.bin"))
 
 
@@ -301,9 +304,14 @@ class CarlaGame():
                                 self.skip_counter = 0 # reset skip counter
 
                             self.vehicle_manager.vehicle_state[self.ego_vehicle.id] = self.vehicle_manager.get_vehicle_state(self.ego_vehicle)
-                            self.save(P, Tr_velo_to_cam, R0_rect, image_rgb, bboxes, pointcloud)
-                            print("saved:", self.save_counter)
-                            self.save_counter += 1
+                            
+                            if len(bboxes) > 0:
+                                self.save(P, Tr_velo_to_cam, R0_rect, image_rgb, bboxes, pointcloud)
+                                print("saved:", self.save_counter)
+                                self.save_counter += 1
+                            else:
+                                print("not saved because no bounding box found")
+
                             if self.save_counter == cfg.save_num:
                                 sys.exit()
 

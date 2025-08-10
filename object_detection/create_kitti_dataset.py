@@ -2,6 +2,7 @@ import os
 from sklearn.model_selection import train_test_split
 
 data_root = "C:/Users/marvi/Datasets/Object/CarlaKitti"
+kitti_root = "C:/Users/marvi/Datasets/Object/kitti"
 
 all_data = []
 for run_name in os.listdir(data_root):
@@ -9,13 +10,17 @@ for run_name in os.listdir(data_root):
         name = os.path.splitext(name)[0]
         all_data.append(f"{run_name} {name}")
 
-train_data, test_data = train_test_split(list(range(len(all_data))), test_size=0.3)
+trainval_data, test_data = train_test_split(list(range(len(all_data))), test_size=0.2)
+train_data, val_data = train_test_split(trainval_data, test_size=0.2)
+assert len(all_data) == len(train_data) + len(val_data) + len(test_data)
 
 print("All data:", len(all_data))
 print("Train:", len(train_data))
+print("Val:", len(val_data))
 print("Test:", len(test_data))
 
-def move(split_path, split_idx):
+def move(split, split_idx):
+    split_path = os.path.join(kitti_root, split)
     calib_folder = os.path.join(split_path, "calib")
     image_folder = os.path.join(split_path, "image_2")
     label_folder = os.path.join(split_path, "label_2")
@@ -25,6 +30,8 @@ def move(split_path, split_idx):
     os.makedirs(image_folder, exist_ok=True)
     os.makedirs(label_folder, exist_ok=True)
     os.makedirs(velodyne_folder, exist_ok=True)
+
+    split_idx_list = []
 
     for idx in split_idx:
         name = all_data[idx]
@@ -46,8 +53,18 @@ def move(split_path, split_idx):
         destination_path = os.path.join(velodyne_folder, f"{idx:06d}.bin")
         os.rename(source_path, destination_path)
 
-kitti_root = "C:/Users/marvi/Datasets/Object/kitti"
-training_path = os.path.join(kitti_root, "training")
-move(training_path, train_data)
-testing_path = os.path.join(kitti_root, "testing")
-move(testing_path, test_data)
+        split_idx_list.append(f"{idx:06d}")
+    
+    if split == "training":
+        split_txt = "train"
+    elif split == "validating":
+        split_txt = "val"
+    else:
+        split_txt = "test"
+
+    with open(os.path.join(kitti_root, f"{split_txt}.txt"), 'w') as f:
+        f.write("\n".join(sorted(split_idx_list)))
+
+move("training", train_data)
+move("validating", val_data)
+move("testing", test_data)
