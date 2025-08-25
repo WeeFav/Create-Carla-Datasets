@@ -143,8 +143,6 @@ class CarlaGame():
         # Draw the display.
         self.draw_image(self.display, image_rgb)
 
-        pointcloud[:, 1] = -pointcloud[:, 1] # convert from UE to Kitti/Open3D
-
         # Update point cloud
         self.pcd.points = o3d.utility.Vector3dVector(pointcloud)
         self.pcd.colors = o3d.utility.Vector3dVector(np.tile([1.0, 1.0, 0.0], (pointcloud.shape[0], 1)))
@@ -227,14 +225,13 @@ class CarlaGame():
                 x = bbox['bottom_center'][0]
                 y = -bbox['bottom_center'][1] # convert from UE to Kitti/Open3D
                 z = bbox['bottom_center'][2]
-                rotation_z = -bbox['rotation_z'] # convert from UE to Kitti/Open3D
+                rotation_z = bbox['rotation_z']
                 label_flat = ' '.join(map(str, [object_type, truncation, occlusion, alpha, left, top, right, bottom, height, width, length, x, y, z, rotation_z]))
                 f.write(f"{label_flat}\n")
         
         
         ### velodyne ###
         pointcloud = pointcloud.astype(np.float32)
-        pointcloud[:, 1] = -pointcloud[:, 1] # convert from UE to Kitti/Open3D
         pointcloud.tofile(os.path.join(self.velodyne_folder, f"{self.save_counter}.bin"))
 
 
@@ -285,6 +282,8 @@ class CarlaGame():
                     bboxes = utils.get_bboxes(self.world, pointcloud[:, :3], sensor_lidar)
                     P, Tr_velo_to_cam, R0_rect = utils.get_calib(self.camera_rgb, self.lidar)
 
+
+                    pointcloud[:, 1] = -pointcloud[:, 1] # convert from UE to Kitti/Open3D
 
                     ### Render display ###
                     self.render_display(image_rgb, pointcloud[:, :3], bboxes)

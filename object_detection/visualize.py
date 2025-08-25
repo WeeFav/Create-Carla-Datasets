@@ -29,8 +29,8 @@ def bbox3d2corners(bboxes):
     # 2. rotate around z axis
     rot_sin, rot_cos = np.sin(angles), np.cos(angles)
     # in fact, -angle
-    rot_mat = np.array([[rot_cos, -rot_sin, np.zeros_like(rot_cos)],
-                        [rot_sin, rot_cos, np.zeros_like(rot_cos)],
+    rot_mat = np.array([[rot_cos, rot_sin, np.zeros_like(rot_cos)],
+                        [-rot_sin, rot_cos, np.zeros_like(rot_cos)],
                         [np.zeros_like(rot_cos), np.zeros_like(rot_cos), np.ones_like(rot_cos)]], 
                         dtype=np.float32) # (3, 3, n)
     rot_mat = np.transpose(rot_mat, (2, 1, 0)) # (n, 3, 3)
@@ -115,15 +115,14 @@ lines = [
 mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=10, origin=[0, 0, 0])
 vis.add_geometry(mesh_frame)
 
-pointcloud = np.fromfile(r"C:\Users\marvi\Datasets\Object\kitti\training\velodyne\000217.bin", dtype=np.float32)
+pointcloud = np.fromfile(r"C:\Users\marvi\Datasets\Object\kitti\training\velodyne\000129.bin", dtype=np.float32)
 pointcloud = pointcloud.reshape(-1, 4)[:, :3]
-pointcloud[:, 1] = -pointcloud[:, 1] # convert from UE to Kitti/Open3D
 
 pcd.points = o3d.utility.Vector3dVector(pointcloud)
 pcd.colors = o3d.utility.Vector3dVector(np.tile([1.0, 1.0, 0.0], (pointcloud.shape[0], 1)))
 vis.add_geometry(pcd)
 
-with open(r"C:\Users\marvi\Datasets\Object\kitti\training\label_2\000217.txt") as f:
+with open(r"C:\Users\marvi\Datasets\Object\kitti\training\label_2\000129.txt") as f:
     labels = f.readlines()
 
 bboxes = []
@@ -139,8 +138,6 @@ bboxes = np.array(bboxes) # (N, 7)
 bboxes_corners = bbox3d2corners(bboxes)
 
 for corners in bboxes_corners:
-    corners[:, 1] = -corners[:, 1] # convert from UE to Kitti/Open3D
-
     # Create LineSet
     line_set = o3d.geometry.LineSet()
     line_set.points = o3d.utility.Vector3dVector(corners)
